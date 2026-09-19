@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Accessibility & Display overrides */
+html[data-font-size="large"] {
+  font-size: 17.5px;
+}
+html[data-font-size="xlarge"] {
+  font-size: 19px;
+}
+html[data-font-size="normal"] {
+  font-size: 16px;
+}
+
+/* Reduced Motion implementation */
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* High Contrast mode */
+html.high-contrast {
+  filter: contrast(1.2);
+}
+
+html.high-contrast.dark {
+  background-color: #030712 !important;
+}
+
+/* Custom scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
+}
