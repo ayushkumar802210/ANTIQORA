@@ -1,5 +1,6 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
@@ -564,11 +565,37 @@ async function startServer() {
       appType: "spa",
     });
     app.use(vite.middlewares);
+
+    // Development SPA HTML Fallback
+    app.use('*', async (req, res, next) => {
+      if (req.originalUrl.startsWith('/api/')) return next();
+      const url = req.originalUrl;
+      try {
+        const indexPath = path.resolve(process.cwd(), 'index.html');
+        if (fs.existsSync(indexPath)) {
+          let template = fs.readFileSync(indexPath, 'utf-8');
+          template = await vite.transformIndexHtml(url, template);
+          res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+        } else {
+          next();
+        }
+      } catch (e) {
+        vite.ssrFixStacktrace(e as Error);
+        next(e);
+      }
+    });
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*all', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.use('*', (req, res, next) => {
+      if (req.originalUrl.startsWith('/api/')) return next();
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        // Fallback to root index.html if dist/index.html is being prepared
+        res.sendFile(path.resolve(process.cwd(), 'index.html'));
+      }
     });
   }
 

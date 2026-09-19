@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Logo } from './Logo';
+import { PWAInstallButton } from './PWAInstallButton';
 import { AnswerDepth } from '../types';
 import { SUPPORTED_LANGUAGES } from '../services/languages';
 import { 
@@ -298,11 +299,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* Top Bar: Quick Theme, Mode & Settings */}
       <div className="w-full flex items-center justify-between gap-3 mb-6 sm:mb-8">
         
-        {/* Left Status Pill */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-cyan-500/20 bg-cyan-500/5 dark:bg-slate-900/60 text-[11px] font-mono text-cyan-600 dark:text-cyan-400 backdrop-blur-md">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="hidden sm:inline font-semibold">ANTIQORA Okapi BM25 Engine</span>
-          <span className="sm:hidden font-semibold">ANTIQORA v2.6</span>
+        {/* Left Status Pill & PWA Install Button */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-cyan-500/20 bg-cyan-500/5 dark:bg-slate-900/60 text-[11px] font-mono text-cyan-600 dark:text-cyan-400 backdrop-blur-md">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="hidden sm:inline font-semibold">ANTIQORA Okapi BM25 Engine</span>
+            <span className="sm:hidden font-semibold">ANTIQORA v2.6</span>
+          </div>
+
+          <PWAInstallButton variant="pill" />
         </div>
 
         {/* Right Action Controls */}

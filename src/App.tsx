@@ -56,6 +56,7 @@ import { DocumentSearchModal } from './components/DocumentSearchModal';
 import { RoadmapModal } from './components/RoadmapModal';
 import { SearchEngineAdminModal } from './components/SearchEngineAdminModal';
 import { StartupScreen } from './components/StartupScreen';
+import { PWABottomBanner } from './components/PWAInstallButton';
 import { AnimatePresence, motion } from 'motion/react';
 import { settingsManager, AntiqoraSettings } from './services/settingsManager';
 import { GithubSearchProvider, GitHubSearchResult } from './services/providers/GithubSearchProvider';
@@ -587,6 +588,9 @@ export default function App() {
         isOpen={isSearchAdminOpen}
         onClose={() => setIsSearchAdminOpen(false)}
       />
+
+      {/* Floating PWA Install Bottom Banner */}
+      <PWABottomBanner />
 
     </div>
   );
