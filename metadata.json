@@ -1,7 +1,7 @@
 {
   "name": "ANTIQORA",
   "description": "Understand the World. Beyond Search. Global multi-temporal knowledge platform synthesizing past history, present facts, and future horizons.",
-  "requestFramePermissions": ["microphone"],
+  "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
 

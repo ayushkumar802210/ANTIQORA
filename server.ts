@@ -3,6 +3,10 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { CrawlerService } from "./src/services/crawler/CrawlerService";
+import { InvertedIndex } from "./src/services/indexer/InvertedIndex";
+import { RankingEngine } from "./src/services/ranking/RankingEngine";
+import { QueryUnderstandingService } from "./src/services/query/QueryUnderstanding";
 
 dotenv.config();
 
@@ -11,6 +15,11 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // Initialize Crawler Seed URLs & Indexer
+  CrawlerService.initSeedUrls();
+  const seedDocs = CrawlerService.getCrawledDocuments();
+  seedDocs.forEach(doc => InvertedIndex.addDocument(doc));
 
   // Initialize Gemini SDK server-side
   const ai = new GoogleGenAI({
@@ -107,48 +116,166 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
+  // Autocomplete & Query Suggestions Endpoint
+  app.get("/api/autocomplete", (req, res) => {
+    const q = (req.query.q as string) || "";
+    const suggestions = QueryUnderstandingService.getAutocompleteSuggestions(q);
+    res.json({ suggestions });
+  });
+
+  // Live Crawler Status & Metrics Endpoint
+  app.get("/api/crawler/status", (req, res) => {
+    const stats = CrawlerService.getStats();
+    const documents = CrawlerService.getCrawledDocuments();
+    const indexMetrics = InvertedIndex.getIndexMetrics();
+    res.json({ stats, documents, indexMetrics });
+  });
+
+  // Live URL Crawler Trigger Endpoint
+  app.post("/api/crawler/crawl", async (req, res) => {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: "URL parameter required" });
+    }
+
+    try {
+      const doc = await CrawlerService.fetchAndParse(url);
+      if (doc) {
+        InvertedIndex.addDocument(doc);
+        return res.json({ success: true, document: doc });
+      } else {
+        return res.status(422).json({ error: "Unable to parse or disallowed by robots.txt" });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Crawler fetch failure" });
+    }
+  });
+
+  // Google Custom Search API Proxy Endpoint
+  app.get("/api/search/google", async (req, res) => {
+    const query = (req.query.q as string || "").trim();
+    const apiKey = process.env.SEARCH_API_KEY || process.env.GOOGLE_SEARCH_API_KEY;
+    const cx = process.env.GOOGLE_SEARCH_CX || process.env.SEARCH_CX_ID;
+
+    if (apiKey && cx && query) {
+      try {
+        const googleUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&q=${encodeURIComponent(query)}`;
+        const gRes = await fetch(googleUrl);
+        if (gRes.ok) {
+          const gData = await gRes.json();
+          const mappedResults = (gData.items || []).map((item: any, index: number) => ({
+            id: `goog-${index}-${Date.now()}`,
+            title: item.title,
+            url: item.link,
+            domain: item.displayLink || new URL(item.link).hostname,
+            snippet: item.snippet,
+            category: "web",
+            date: "Recent",
+            verification: "verified"
+          }));
+
+          return res.json({
+            query,
+            totalResults: gData.searchInformation?.totalResults || mappedResults.length,
+            isRealApi: true,
+            provider: "Google Custom Search JSON API",
+            results: mappedResults
+          });
+        }
+      } catch (err) {
+        console.warn("Notice: Google Custom Search API proxy unreachable, serving synthesized index:", err);
+      }
+    }
+
+    // Fallback response when custom search keys not present
+    res.json({
+      query,
+      totalResults: 2,
+      isRealApi: false,
+      provider: "ANTIQORA Index Engine",
+      results: [
+        {
+          id: `goog-fallback-1`,
+          title: `${query} - Official Knowledge & Web Documentation`,
+          url: `https://google.com/search?q=${encodeURIComponent(query)}`,
+          domain: 'google.com',
+          snippet: `Live search records and index entries for "${query}". Highlighting verified documentation, specifications, and primary sources.`,
+          category: 'general',
+          date: 'Just now',
+          verification: 'verified'
+        },
+        {
+          id: `goog-fallback-2`,
+          title: `Global Research Papers & Standards regarding ${query}`,
+          url: `https://scholar.google.com/scholar?q=${encodeURIComponent(query)}`,
+          domain: 'scholar.google.com',
+          snippet: `Peer-reviewed scientific articles, open access research papers, and technical specifications regarding ${query}.`,
+          category: 'research',
+          date: 'Yesterday',
+          verification: 'multiple_sources'
+        }
+      ]
+    });
+  });
+
+  // Primary Web Search Endpoint using Inverted Index + BM25 + Ranking Engine
   app.get("/api/search", (req, res) => {
     const query = (req.query.q as string || "").toLowerCase();
     const filter = req.query.filter as string || "all";
     
-    let results = DEMO_WEB_RESULTS;
-    if (query) {
-      results = DEMO_WEB_RESULTS.filter(item => 
+    // Perform Inverted Index BM25 search
+    const indexSearchResult = InvertedIndex.search(query, filter);
+    
+    let results = indexSearchResult.results;
+
+    // Merge with static demo results if index hits are few
+    if (results.length < 3) {
+      const demoHits = DEMO_WEB_RESULTS.filter(item => 
         item.title.toLowerCase().includes(query) || 
         item.snippet.toLowerCase().includes(query) ||
         item.domain.toLowerCase().includes(query)
       );
-      if (results.length === 0) {
-        results = [
-          {
-            id: "synth-1",
-            title: `Exploring ${query}: Comprehensive Overview`,
-            url: `https://knowledge-base.org/search?q=${encodeURIComponent(query)}`,
-            domain: "knowledge-base.org",
-            snippet: `Detailed analysis and decentralized documentation regarding ${query}. Highlighting core principles, recent developments, and expert insights.`,
-            category: "general",
-            date: "Today"
-          },
-          {
-            id: "synth-2",
-            title: `Advanced Protocols & Implementation of ${query}`,
-            url: `https://tech-archive.io/${encodeURIComponent(query)}`,
-            domain: "tech-archive.io",
-            snippet: `Technical specifications, best practices, and architecture frameworks for working with ${query} in modern production environments.`,
-            category: "technology",
-            date: "3 days ago"
-          }
-        ];
-      }
+      
+      const existingIds = new Set(results.map(r => r.id));
+      demoHits.forEach(dh => {
+        if (!existingIds.has(dh.id)) results.push(dh);
+      });
     }
+
+    // Fallback synthesis if no results found
+    if (results.length === 0) {
+      results = [
+        {
+          id: "synth-1",
+          title: `Exploring ${query}: Comprehensive Technical Overview`,
+          url: `https://knowledge-base.org/search?q=${encodeURIComponent(query)}`,
+          domain: "knowledge-base.org",
+          snippet: `Detailed analysis and decentralized documentation regarding ${query}. Highlighting core principles, recent developments, and expert insights.`,
+          category: "general",
+          date: "Today"
+        },
+        {
+          id: "synth-2",
+          title: `Advanced Protocols & Implementation of ${query}`,
+          url: `https://tech-archive.io/${encodeURIComponent(query)}`,
+          domain: "tech-archive.io",
+          snippet: `Technical specifications, best practices, and architecture frameworks for working with ${query} in modern production environments.`,
+          category: "technology",
+          date: "3 days ago"
+        }
+      ];
+    }
+
+    // Rank results with Ranking Engine
+    const rankedResults = RankingEngine.rankResults(results, query);
 
     res.json({
       query,
       filter,
-      totalResults: results.length,
-      results,
+      totalResults: rankedResults.length,
+      results: rankedResults,
       isRealApi: false,
-      provider: "ANTIQORA Core Engine"
+      provider: "ANTIQORA BM25 & Neural Ranking Engine"
     });
   });
 
@@ -196,6 +323,85 @@ async function startServer() {
       items = DEMO_SHOPPING.filter(s => s.name.toLowerCase().includes(query) || s.seller.toLowerCase().includes(query));
     }
     res.json({ results: items, isRealApi: false });
+  });
+
+  // GitHub Search API proxy route
+  app.get("/api/github", async (req, res) => {
+    const query = req.query.q as string || "typescript react";
+    const githubKey = process.env.GITHUB_API_KEY || process.env.SEARCH_API_KEY;
+
+    try {
+      const headers: Record<string, string> = {
+        'User-Agent': 'ANTIQORA-Search-Engine',
+        'Accept': 'application/vnd.github.v3+json'
+      };
+      if (githubKey) {
+        headers['Authorization'] = `token ${githubKey}`;
+      }
+
+      const [repoRes, issueRes] = await Promise.all([
+        fetch(`https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&per_page=10`, { headers }),
+        fetch(`https://api.github.com/search/issues?q=${encodeURIComponent(query)}&per_page=5`, { headers })
+      ]);
+
+      if (repoRes.ok && issueRes.ok) {
+        const repoData = await repoRes.json();
+        const issueData = await issueRes.json();
+
+        return res.json({
+          repositories: repoData.items || [],
+          issues: issueData.items || [],
+          totalCount: repoData.total_count || 0,
+          isRealApi: true
+        });
+      }
+    } catch (e) {
+      console.warn("GitHub API rate limit or network issue:", e);
+    }
+
+    // Fallback if real GitHub API fails or is rate-limited
+    res.json({
+      repositories: [
+        {
+          id: 101,
+          name: "antiqora-core",
+          full_name: "antiqora/antiqora-core",
+          description: `High-performance multi-temporal search engine and neural knowledge synthesis platform for ${query}`,
+          html_url: "https://github.com/antiqora/antiqora-core",
+          stargazers_count: 1450,
+          forks_count: 210,
+          language: "TypeScript",
+          updated_at: new Date().toISOString(),
+          owner: { login: "antiqora", avatar_url: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" }
+        },
+        {
+          id: 102,
+          name: "ev-matlab-simulation",
+          full_name: "open-electric/ev-matlab-simulation",
+          description: `Advanced electric vehicle powertrain modeling, battery management systems, and MATLAB/Simulink integration for ${query}`,
+          html_url: "https://github.com/open-electric/ev-matlab-simulation",
+          stargazers_count: 890,
+          forks_count: 145,
+          language: "MATLAB",
+          updated_at: new Date().toISOString(),
+          owner: { login: "open-electric", avatar_url: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" }
+        }
+      ],
+      issues: [
+        {
+          id: 201,
+          title: `Enhancement: query optimization for ${query}`,
+          html_url: "https://github.com/antiqora/antiqora-core/issues/42",
+          state: "open",
+          number: 42,
+          repository_url: "https://api.github.com/repos/antiqora/antiqora-core",
+          created_at: new Date().toISOString(),
+          user: { login: "developer-alpha" }
+        }
+      ],
+      totalCount: 2,
+      isRealApi: false
+    });
   });
 
   // Helper for generating text with fallback models for 503 / high demand spikes

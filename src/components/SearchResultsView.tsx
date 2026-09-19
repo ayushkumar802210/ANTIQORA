@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { SearchResultItem } from '../services/api';
 import { generateAIAnswer } from '../services/api';
 import { settingsManager } from '../services/settingsManager';
+import { GitHubSearchResult } from '../services/providers/GithubSearchProvider';
 import { 
   TabType, 
   OfficialWebsiteResult, 
@@ -33,7 +34,10 @@ import {
   Video,
   ShoppingBag,
   Star,
-  Apple
+  Apple,
+  Code,
+  GitFork,
+  GitPullRequest
 } from 'lucide-react';
 
 interface SearchResultsViewProps {
@@ -52,6 +56,7 @@ interface SearchResultsViewProps {
   intentResult?: QueryIntentResult | null;
   websitesResults?: OfficialWebsiteResult[];
   appsResults?: AppResult[];
+  githubResults?: GitHubSearchResult;
   onOpenRoadmap?: () => void;
   onOpenDocument?: () => void;
 }
@@ -72,6 +77,7 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
   intentResult = null,
   websitesResults = [],
   appsResults = [],
+  githubResults = { repositories: [], issues: [], totalCount: 0, isRealApi: false },
   onOpenRoadmap,
   onOpenDocument
 }) => {
@@ -235,6 +241,7 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
           { id: 'news' as TabType, label: 'News', icon: <Newspaper className="w-3.5 h-3.5" /> },
           { id: 'places' as TabType, label: 'Maps', icon: <MapPin className="w-3.5 h-3.5" /> },
           { id: 'shopping' as TabType, label: 'Shopping', icon: <ShoppingBag className="w-3.5 h-3.5" /> },
+          { id: 'github' as TabType, label: 'GitHub', icon: <Code className="w-3.5 h-3.5" />, badge: 'Repos' },
           { id: 'research' as TabType, label: 'Research', icon: <Layers className="w-3.5 h-3.5" /> },
           { id: 'documents' as TabType, label: 'Documents', icon: <FileText className="w-3.5 h-3.5" /> },
         ].map(cat => {
@@ -352,6 +359,112 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                     )}
                   </div>
                 ))
+              )}
+            </div>
+          )}
+
+          {/* If currentTab is 'github', show GitHub repositories and issues */}
+          {currentTab === 'github' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Code className="w-4 h-4 text-cyan-500" />
+                  <span>GitHub Repositories & Code ({githubResults?.repositories?.length || 0})</span>
+                </h3>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  {githubResults?.isRealApi ? "Live GitHub API" : "Secure Server Proxy / Fallback"}
+                </span>
+              </div>
+
+              {githubResults?.repositories?.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center text-slate-500 text-xs">
+                  No GitHub repositories found for "{query}".
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {githubResults?.repositories?.map((repo) => (
+                    <div 
+                      key={repo.id}
+                      className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3 hover:border-cyan-500/40 transition shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <Code className="w-4 h-4 text-cyan-500 flex-shrink-0" />
+                            <a 
+                              href={repo.html_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="font-bold text-slate-900 dark:text-white text-base hover:text-cyan-500 transition"
+                            >
+                              {repo.full_name}
+                            </a>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+                              {repo.language || 'Code'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{repo.description}</p>
+                          <div className="flex items-center gap-4 text-[11px] text-slate-500 dark:text-slate-400 pt-1">
+                            <span className="flex items-center gap-1">
+                              <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                              <span>{repo.stargazers_count?.toLocaleString()} stars</span>
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <GitFork className="w-3.5 h-3.5 text-slate-400" />
+                              <span>{repo.forks_count?.toLocaleString()} forks</span>
+                            </span>
+                            <span>Updated {new Date(repo.updated_at).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+
+                        <a 
+                          href={repo.html_url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 dark:bg-slate-800 text-white text-xs font-semibold hover:bg-slate-800 dark:hover:bg-slate-700 transition flex-shrink-0"
+                        >
+                          <span>View Repository</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+
+                  {githubResults?.issues && githubResults.issues.length > 0 && (
+                    <div className="pt-6 space-y-4">
+                      <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">Related Issues & Pull Requests</h4>
+                      {githubResults.issues.map((issue) => (
+                        <div 
+                          key={issue.id}
+                          className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/60 p-4 flex items-center justify-between gap-4"
+                        >
+                          <div className="flex items-center gap-3">
+                            <GitPullRequest className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                            <div>
+                              <a 
+                                href={issue.html_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs font-bold text-slate-800 dark:text-slate-200 hover:text-cyan-500 transition"
+                              >
+                                {issue.title}
+                              </a>
+                              <p className="text-[11px] text-slate-400">#{issue.number} opened by {issue.user?.login}</p>
+                            </div>
+                          </div>
+                          <a
+                            href={issue.html_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-cyan-600 dark:text-cyan-400 font-semibold hover:underline flex-shrink-0"
+                          >
+                            View Issue
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}

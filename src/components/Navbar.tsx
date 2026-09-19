@@ -26,7 +26,8 @@ import {
   FileText,
   Globe,
   Smartphone,
-  Milestone
+  Milestone,
+  Cpu
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -35,6 +36,7 @@ interface NavbarProps {
   onOpenAuth: () => void;
   onOpenSettings: () => void;
   onOpenRoadmap?: () => void;
+  onOpenCrawlerAdmin?: () => void;
   user: UserProfile;
   theme: 'dark' | 'light' | 'system';
   onToggleTheme: () => void;
@@ -55,6 +57,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAuth,
   onOpenSettings,
   onOpenRoadmap,
+  onOpenCrawlerAdmin,
   user,
   theme,
   onToggleTheme,
@@ -183,6 +186,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                 ))}
               </select>
             </div>
+          )}
+
+          {onOpenCrawlerAdmin && (
+            <button
+              onClick={onOpenCrawlerAdmin}
+              className="flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500 hover:text-slate-950 transition shadow-sm"
+              title="Search Engine & Crawler Console"
+              aria-label="Crawler Console"
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span className="hidden md:inline">Crawler Engine</span>
+            </button>
           )}
 
           {onOpenRoadmap && (

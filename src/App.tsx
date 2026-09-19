@@ -54,8 +54,13 @@ import { VoiceSearchModal } from './components/VoiceSearchModal';
 import { VisualSearchModal } from './components/VisualSearchModal';
 import { DocumentSearchModal } from './components/DocumentSearchModal';
 import { RoadmapModal } from './components/RoadmapModal';
+import { SearchEngineAdminModal } from './components/SearchEngineAdminModal';
+import { StartupScreen } from './components/StartupScreen';
+import { AnimatePresence, motion } from 'motion/react';
 import { settingsManager, AntiqoraSettings } from './services/settingsManager';
-import { Globe2, ShieldCheck, Sparkles, Milestone } from 'lucide-react';
+import { GithubSearchProvider, GitHubSearchResult } from './services/providers/GithubSearchProvider';
+import { GoogleSearchProvider } from './services/providers/GoogleSearchProvider';
+import { Globe2, ShieldCheck, Sparkles, Milestone, Cpu } from 'lucide-react';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<TabType>('home');
@@ -77,6 +82,7 @@ export default function App() {
   const [videos, setVideos] = useState<VideoResultItem[]>([]);
   const [places, setPlaces] = useState<PlaceResultItem[]>([]);
   const [products, setProducts] = useState<ProductResultItem[]>([]);
+  const [githubResults, setGithubResults] = useState<GitHubSearchResult>({ repositories: [], issues: [], totalCount: 0, isRealApi: false });
 
   // User profile
   const [user, setUser] = useState<UserProfile>(() => {
@@ -105,7 +111,16 @@ export default function App() {
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
   const [isVisualOpen, setIsVisualOpen] = useState(false);
   const [isDocOpen, setIsDocOpen] = useState(false);
+  const [isSearchAdminOpen, setIsSearchAdminOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [showStartup, setShowStartup] = useState<boolean>(() => {
+    return !sessionStorage.getItem('antiqora_startup_seen');
+  });
+
+  const handleStartupComplete = useCallback(() => {
+    setShowStartup(false);
+    sessionStorage.setItem('antiqora_startup_seen', 'true');
+  }, []);
 
   // 3D Knowledge States
   const [answerDepth, setAnswerDepth] = useState<AnswerDepth>(() => {
@@ -254,8 +269,8 @@ export default function App() {
     }
 
     try {
-      // Fetch data categories, 3D knowledge overview, and apps & websites discovery in parallel
-      const [webRes, imgRes, newsRes, vidRes, placeRes, prodRes, overviewRes, intentRes, sitesRes, appsRes] = await Promise.all([
+      // Fetch data categories, 3D knowledge overview, apps & websites discovery, Google Custom Search, and GitHub search in parallel
+      const [webRes, imgRes, newsRes, vidRes, placeRes, prodRes, overviewRes, intentRes, sitesRes, appsRes, githubRes, googleRes] = await Promise.all([
         searchWeb(trimmed),
         searchImages(trimmed),
         searchNews(),
@@ -265,11 +280,22 @@ export default function App() {
         get3DOverview(trimmed, settings.aiAnswerStyle, settings.interfaceLanguage),
         detectQueryIntent(trimmed),
         searchWebsites(trimmed),
-        searchApps(trimmed)
+        searchApps(trimmed),
+        GithubSearchProvider.search(trimmed),
+        GoogleSearchProvider.search(trimmed)
       ]);
 
-      setWebResults(webRes.results);
-      setTotalResults(webRes.totalResults);
+      // Combine inverted index results with Google Custom Search API results
+      const combinedWeb = [...webRes.results];
+      if (googleRes?.results?.length) {
+        const existingUrls = new Set(combinedWeb.map(r => r.url));
+        googleRes.results.forEach(gItem => {
+          if (!existingUrls.has(gItem.url)) combinedWeb.push(gItem);
+        });
+      }
+
+      setWebResults(combinedWeb);
+      setTotalResults(combinedWeb.length || webRes.totalResults);
       setImages(imgRes);
       setNews(newsRes);
       setVideos(vidRes);
@@ -281,6 +307,7 @@ export default function App() {
       setIntentResult(intentRes);
       setWebsitesResults(sitesRes);
       setAppsResults(appsRes);
+      setGithubResults(githubRes);
     } catch (err: any) {
       console.error("Search execution error:", err);
       setSearchError("Failed to fetch search results. Please verify connection and retry.");
@@ -321,6 +348,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-white transition-colors duration-200">
       
+      {/* Startup Screen Animation */}
+      <AnimatePresence>
+        {showStartup && (
+          <StartupScreen onComplete={handleStartupComplete} />
+        )}
+      </AnimatePresence>
+
       {/* Offline Banner */}
       {!isOnline && (
         <div className="bg-amber-500 text-slate-950 text-xs font-semibold py-1.5 px-4 text-center z-50 shadow-md">
@@ -344,6 +378,7 @@ export default function App() {
         onOpenAuth={() => setIsAuthOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenRoadmap={() => setIsRoadmapOpen(true)}
+        onOpenCrawlerAdmin={() => setIsSearchAdminOpen(true)}
         onOpenVisual={() => setIsVisualOpen(true)}
         onOpenDocument={() => setIsDocOpen(true)}
         currentLanguage={currentLanguage}
@@ -379,7 +414,7 @@ export default function App() {
           />
         )}
 
-        {(currentTab === 'all' || currentTab === 'websites' || currentTab === 'apps' || currentTab === 'ai') && (
+        {(currentTab === 'all' || currentTab === 'websites' || currentTab === 'apps' || currentTab === 'github' || currentTab === 'ai') && (
           <SearchResultsView
             query={activeQuery || "Quantum Computing"}
             results={webResults}
@@ -399,6 +434,7 @@ export default function App() {
             intentResult={intentResult}
             websitesResults={websitesResults}
             appsResults={appsResults}
+            githubResults={githubResults}
             onOpenRoadmap={() => setIsRoadmapOpen(true)}
             onOpenDocument={() => setIsDocOpen(true)}
           />
@@ -544,6 +580,12 @@ export default function App() {
       <RoadmapModal
         isOpen={isRoadmapOpen}
         onClose={() => setIsRoadmapOpen(false)}
+      />
+
+      {/* Search Engine & Crawler Admin Modal */}
+      <SearchEngineAdminModal
+        isOpen={isSearchAdminOpen}
+        onClose={() => setIsSearchAdminOpen(false)}
       />
 
     </div>

@@ -9,6 +9,7 @@ export type TabType =
   | 'news' 
   | 'places' 
   | 'shopping' 
+  | 'github'
   | 'research' 
   | 'documents'
   | 'timeline' 
