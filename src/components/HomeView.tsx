@@ -312,57 +312,15 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
         {/* Right Action Controls */}
         <div className="flex items-center gap-2">
-          {/* Quick Theme Switcher */}
-          <div className="flex items-center rounded-xl bg-slate-200/80 dark:bg-slate-900/80 p-1 border border-slate-300/80 dark:border-slate-800 text-xs shadow-xs backdrop-blur-md">
-            <button
-              onClick={() => onSetTheme('light')}
-              className={`p-1.5 sm:px-2.5 sm:py-1 rounded-lg transition flex items-center gap-1 ${
-                theme === 'light'
-                  ? 'bg-white text-cyan-600 shadow-xs font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-              title="Light Mode"
-              aria-label="Light Mode"
-            >
-              <Sun className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Light</span>
-            </button>
-            <button
-              onClick={() => onSetTheme('dark')}
-              className={`p-1.5 sm:px-2.5 sm:py-1 rounded-lg transition flex items-center gap-1 ${
-                theme === 'dark'
-                  ? 'bg-slate-800 text-cyan-400 shadow-xs font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-              title="Dark Mode"
-              aria-label="Dark Mode"
-            >
-              <Moon className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Dark</span>
-            </button>
-            <button
-              onClick={() => onSetTheme('system')}
-              className={`p-1.5 sm:px-2.5 sm:py-1 rounded-lg transition flex items-center gap-1 ${
-                theme === 'system'
-                  ? 'bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-xs font-semibold'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-              title="System Mode"
-              aria-label="System Mode"
-            >
-              <Monitor className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Auto</span>
-            </button>
-          </div>
-
           {/* Settings Trigger */}
           <button
             onClick={onOpenSettings}
-            className="p-2 rounded-xl bg-slate-200/80 dark:bg-slate-900/80 border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:text-cyan-500 dark:hover:text-cyan-400 transition shadow-xs"
-            title="Search & API Settings"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-200/80 dark:bg-slate-900/80 border border-slate-300 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-cyan-500 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition shadow-xs"
+            title="Browser Settings"
             aria-label="Settings"
           >
             <Settings className="w-4 h-4" />
+            <span className="hidden sm:inline">Settings</span>
           </button>
         </div>
       </div>

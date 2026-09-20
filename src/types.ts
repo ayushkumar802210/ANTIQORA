@@ -40,7 +40,124 @@ export interface SearchHistoryItem {
   id: string;
   query: string;
   timestamp: string;
+  title?: string;
+  url?: string;
+  domain?: string;
+  isIncognito?: boolean;
 }
+
+export interface TabGroup {
+  id: string;
+  name: string;
+  color: string;
+  tabIds?: string[];
+}
+
+export interface BrowserTab {
+  id: string;
+  title: string;
+  url?: string;
+  isIncognito: boolean;
+  isPinned?: boolean;
+  groupId?: string;
+  currentTab?: TabType;
+  currentSubTab?: TabType;
+  query?: string;
+  searchQuery?: string;
+  activeQuery?: string;
+  webResults?: any[];
+  totalResults?: number;
+  images?: any[];
+  news?: any[];
+  videos?: any[];
+  places?: any[];
+  products?: any[];
+  githubResults?: any;
+  overview3D?: any | null;
+  timelineEvents?: any[];
+  futureScenarios?: any[];
+  intentResult?: any | null;
+  websitesResults?: any[];
+  appsResults?: any[];
+  isSearchLoading?: boolean;
+  searchError?: string | null;
+  createdAt?: number;
+  history?: { query: string; tab: TabType; title?: string; url?: string }[];
+  historyStack?: string[];
+  historyIndex?: number;
+}
+
+export interface ClosedTab {
+  id: string;
+  title: string;
+  url: string;
+  query: string;
+  tabType: TabType;
+  closedAt: number;
+  isIncognito: boolean;
+}
+
+export interface DownloadItem {
+  id: string;
+  fileName: string;
+  fileType: string;
+  fileSize?: string;
+  downloadedAt: number;
+  sourceUrl: string;
+  sourceDomain: string;
+  status: 'downloading' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+}
+
+export interface BookmarkFolder {
+  id: string;
+  name: string;
+  parentId?: string | null;
+}
+
+export interface BookmarkItem {
+  id: string;
+  title: string;
+  url: string;
+  domain: string;
+  folderId?: string;
+  addedAt: number;
+  icon?: string;
+  type?: 'web' | 'image' | 'news' | 'product' | 'research' | 'website' | 'app';
+}
+
+export interface ShortcutItem {
+  id: string;
+  title: string;
+  url: string;
+  icon?: string;
+  category?: string;
+}
+
+export interface NewTabCustomization {
+  background: 'gradient' | 'minimal' | 'nebula' | 'cyberpunk' | 'cosmic' | 'deepsea';
+  theme: 'dark' | 'light' | 'system';
+  showShortcuts: boolean;
+  showRecentSearches: boolean;
+  showBookmarks: boolean;
+  showTrending: boolean;
+  searchEngine: string;
+  showClock: boolean;
+  showGreeting: boolean;
+  customShortcuts: ShortcutItem[];
+}
+
+export type FullPageView =
+  | null
+  | 'settings'
+  | 'history'
+  | 'delete-data'
+  | 'downloads'
+  | 'bookmarks'
+  | 'recent-tabs'
+  | 'account-sync'
+  | 'customize-new-tab'
+  | 'help-feedback';
 
 export interface SavedItem {
   id: string;

@@ -4,6 +4,7 @@ import { MapPin, Star, Phone, Globe, Navigation, Search, Clock, AlertCircle, X }
 
 interface PlacesViewProps {
   places: PlaceResultItem[];
+  isLoading?: boolean;
 }
 
 export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {

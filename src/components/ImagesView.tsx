@@ -3,17 +3,18 @@ import { ImageResultItem } from '../services/api';
 import { Search, ExternalLink, X, Image as ImageIcon, AlertCircle } from 'lucide-react';
 
 interface ImagesViewProps {
-  initialQuery: string;
+  initialQuery?: string;
   images: ImageResultItem[];
+  isLoading?: boolean;
 }
 
-export const ImagesView: React.FC<ImagesViewProps> = ({ initialQuery, images }) => {
+export const ImagesView: React.FC<ImagesViewProps> = ({ initialQuery = '', images }) => {
   const [searchTerm, setSearchTerm] = useState(initialQuery);
   const [activeImage, setActiveImage] = useState<ImageResultItem | null>(null);
 
   const filteredImages = images.filter(img => 
-    img.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    img.domain.toLowerCase().includes(searchTerm.toLowerCase())
+    img.title.toLowerCase().includes((searchTerm || '').toLowerCase()) || 
+    img.domain.toLowerCase().includes((searchTerm || '').toLowerCase())
   );
 
   return (

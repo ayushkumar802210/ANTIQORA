@@ -37,6 +37,13 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// Skip waiting message handler
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 // Fetch Event: Smart routing & SPA offline fallback
 self.addEventListener('fetch', (event) => {
   const { request } = event;

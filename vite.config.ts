@@ -16,7 +16,7 @@ export default defineConfig(() => {
           id: '/',
           name: 'ANTIQORA',
           short_name: 'ANTIQORA',
-          description: 'Understand the World. Beyond Search. Global multi-temporal knowledge platform.',
+          description: 'Intelligent Global Web Search Platform',
           theme_color: '#090a0f',
           background_color: '#090a0f',
           display: 'standalone',
@@ -49,7 +49,7 @@ export default defineConfig(() => {
           navigateFallbackDenylist: [/^\/api\//, /\.[a-z0-9]+$/i],
         },
         devOptions: {
-          enabled: false,
+          enabled: true,
         },
       }),
     ],

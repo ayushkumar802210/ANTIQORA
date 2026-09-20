@@ -4,6 +4,7 @@ import { ShoppingBag, ExternalLink, CheckCircle, Scale, X, AlertCircle, Eye } fr
 
 interface ShoppingViewProps {
   products: ProductResultItem[];
+  isLoading?: boolean;
 }
 
 export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {

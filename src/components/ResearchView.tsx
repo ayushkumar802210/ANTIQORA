@@ -5,6 +5,8 @@ import { BookOpen, Search, ExternalLink, Bookmark, Award, FileText, Check, Copy 
 
 interface ResearchViewProps {
   initialQuery?: string;
+  query?: string;
+  overview?: any;
 }
 
 export const ResearchView: React.FC<ResearchViewProps> = ({ initialQuery = 'Quantum Computing' }) => {

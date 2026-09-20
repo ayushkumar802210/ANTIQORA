@@ -6,6 +6,7 @@ import { GitCompare, ArrowRight, CheckCircle2, Award, Zap, HelpCircle } from 'lu
 interface CompareViewProps {
   initialA?: string;
   initialB?: string;
+  initialTopic?: string;
 }
 
 export const CompareView: React.FC<CompareViewProps> = ({

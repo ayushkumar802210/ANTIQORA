@@ -8,7 +8,11 @@ interface ChatMessage {
   sources?: any[];
 }
 
-export const AIChatView: React.FC = () => {
+interface AIChatViewProps {
+  initialQuery?: string;
+}
+
+export const AIChatView: React.FC<AIChatViewProps> = ({ initialQuery }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: 'assistant',

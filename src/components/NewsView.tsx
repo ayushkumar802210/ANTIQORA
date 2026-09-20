@@ -4,6 +4,7 @@ import { Newspaper, ExternalLink, Calendar, Tag, AlertCircle, X } from 'lucide-r
 
 interface NewsViewProps {
   news: NewsResultItem[];
+  isLoading?: boolean;
 }
 
 export const NewsView: React.FC<NewsViewProps> = ({ news }) => {

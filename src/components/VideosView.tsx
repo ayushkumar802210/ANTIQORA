@@ -4,6 +4,7 @@ import { Video, Play, ExternalLink, Clock, AlertCircle, X } from 'lucide-react';
 
 interface VideosViewProps {
   videos: VideoResultItem[];
+  isLoading?: boolean;
 }
 
 export const VideosView: React.FC<VideosViewProps> = ({ videos }) => {
