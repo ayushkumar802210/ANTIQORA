@@ -30,16 +30,56 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [name, setName] = useState(user.name || 'Alex Chen');
   const [password, setPassword] = useState('');
   const [activeTab, setActiveTab] = useState<'account' | 'saved' | 'history'>('account');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   if (!isOpen) return null;
 
-  const handleSubmitAuth = (e: React.FormEvent) => {
+  const handleSubmitAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdateUser({
-      name: name || 'Operator',
-      email: email || 'operator@antiqora.io',
-      isLoggedIn: true
-    });
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          email,
+          password,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Invalid email or password");
+      }
+
+      if (!data.authenticated || !data.user) {
+        throw new Error("Authentication failed");
+      }
+
+      // Server-validated session
+      onUpdateUser({
+        ...data.user,
+        isLoggedIn: true,
+      });
+
+      setError("");
+      onClose();
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to authenticate"
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleLogout = () => {
@@ -263,11 +303,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
             </div>
 
+            {error && (
+              <div className="rounded-xl bg-rose-500/10 border border-rose-500/30 p-3 text-xs text-rose-600 dark:text-rose-400 font-medium">
+                {error}
+              </div>
+            )}
+
             <button
               type="submit"
-              className="w-full rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 py-3 text-xs font-semibold text-slate-950 hover:from-cyan-400 hover:to-indigo-500 transition shadow-md shadow-cyan-500/20"
+              disabled={loading}
+              className="w-full rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 py-3 text-xs font-semibold text-slate-950 hover:from-cyan-400 hover:to-indigo-500 transition shadow-md shadow-cyan-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {isLoginMode ? 'Sign In to ANTIQORA' : 'Create Account'}
+              {loading && <div className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin" />}
+              <span>{loading ? 'Authenticating...' : (isLoginMode ? 'Sign In to ANTIQORA' : 'Create Account')}</span>
             </button>
           </form>
         )}

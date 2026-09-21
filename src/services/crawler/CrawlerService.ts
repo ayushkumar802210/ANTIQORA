@@ -19,25 +19,182 @@ export interface CrawledDocument {
   domain: string;
   title: string;
   description: string;
+  snippet?: string;
   headings: string[];
   bodyText: string;
   keywords: string[];
   outboundLinks: string[];
   language: string;
   statusCode: number;
+  contentType?: string;
   contentHash: string;
   crawledAt: string;
   wordCount: number;
   metaTags: Record<string, string>;
   isNoIndex: boolean;
   isNoFollow: boolean;
+  indexed?: boolean;
   pageRankScore?: number;
 }
 
-export interface RobotsRules {
-  disallowedPaths: string[];
-  allowedPaths: string[];
-  crawlDelaySeconds: number;
+export type RobotsRules = {
+  disallowed: string[];
+  allowed: string[];
+  crawlDelay?: number;
+};
+
+function parseHtml(html: string): Document {
+  if (typeof DOMParser !== "undefined") {
+    const parser = new DOMParser();
+    return parser.parseFromString(html, "text/html");
+  }
+  // Fallback document object for headless environment
+  const metaMatch = html.match(/<meta\s+name=["']robots["']\s+content=["']([^"']+)["']/i) || html.match(/<meta\s+content=["']([^"']+)["']\s+name=["']robots["']/i);
+  const content = metaMatch ? metaMatch[1] : "";
+  return {
+    body: { textContent: html.replace(/<[^>]+>/g, " ") },
+    querySelector: (selector: string) => {
+      if (selector.includes('robots')) {
+        return { getAttribute: () => content };
+      }
+      return null;
+    }
+  } as unknown as Document;
+}
+
+function extractText(document: Document): string {
+  return document.body?.textContent?.replace(/\s+/g, " ").trim() || "";
+}
+function isAllowedByRobots(
+  targetUrl: string,
+  rules: RobotsRules
+): boolean {
+  const url = new URL(targetUrl);
+  const pathname = url.pathname;
+
+  // Explicit Allow gets priority when it is more specific.
+  const matchingAllow = rules.allowed
+    .filter(path => pathname.startsWith(path))
+    .sort((a, b) => b.length - a.length)[0];
+
+  const matchingDisallow = rules.disallowed
+    .filter(path => pathname.startsWith(path))
+    .sort((a, b) => b.length - a.length)[0];
+
+  if (!matchingDisallow) return true;
+
+  if (
+    matchingAllow &&
+    matchingAllow.length >= matchingDisallow.length
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export function parseRobotsTxt(
+  text: string,
+  userAgent = "ANTIQUORA"
+): RobotsRules {
+  const lines = text.split(/\r?\n/);
+
+  const disallowed: string[] = [];
+  const allowed: string[] = [];
+
+  let appliesToAgent = false;
+  let crawlDelay: number | undefined;
+
+  for (const rawLine of lines) {
+    const line = rawLine
+      .split("#")[0]
+      .trim();
+
+    if (!line) continue;
+
+    const separator = line.indexOf(":");
+
+    if (separator === -1) continue;
+
+    const field = line
+      .slice(0, separator)
+      .trim()
+      .toLowerCase();
+
+    const value = line
+      .slice(separator + 1)
+      .trim();
+
+    if (field === "user-agent") {
+      appliesToAgent =
+        value === "*" ||
+        value.toLowerCase() === userAgent.toLowerCase();
+    }
+
+    if (!appliesToAgent) continue;
+
+    if (field === "disallow" && value) {
+      disallowed.push(value);
+    }
+
+    if (field === "allow" && value) {
+      allowed.push(value);
+    }
+
+    if (field === "crawl-delay") {
+      const delay = Number(value);
+
+      if (Number.isFinite(delay)) {
+        crawlDelay = delay;
+      }
+    }
+  }
+
+  return {
+    disallowed,
+    allowed,
+    crawlDelay,
+  };
+}
+
+async function checkRobotsTxt(
+  targetUrl: string,
+  userAgent = "ANTIQUORA"
+): Promise<RobotsRules> {
+  const url = new URL(targetUrl);
+
+  const robotsUrl = new URL("/robots.txt", url.origin);
+
+  try {
+    const response = await fetch(robotsUrl, {
+      headers: {
+        "User-Agent": userAgent,
+      },
+    });
+
+    // No robots.txt => no explicit robots rules
+    if (response.status === 404) {
+      return {
+        disallowed: [],
+        allowed: [],
+      };
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `Unable to retrieve robots.txt: ${response.status}`
+      );
+    }
+
+    const text = await response.text();
+
+    return parseRobotsTxt(text, userAgent);
+  } catch {
+    return {
+      disallowed: [],
+      allowed: [],
+    };
+  }
 }
 
 export interface CrawlerStats {
@@ -121,22 +278,14 @@ export class CrawlerService {
     try {
       const parsed = new URL(urlStr);
       const origin = parsed.origin;
-      const path = parsed.pathname;
 
-      if (this.robotsCache.has(origin)) {
-        const rules = this.robotsCache.get(origin)!;
-        return !rules.disallowedPaths.some(dis => path.startsWith(dis));
+      let rules = this.robotsCache.get(origin);
+      if (!rules) {
+        rules = await checkRobotsTxt(urlStr);
+        this.robotsCache.set(origin, rules);
       }
 
-      // Default permissive rules with safeguard
-      const rules: RobotsRules = {
-        disallowedPaths: ['/admin', '/private', '/account', '/login', '/cart', '/checkout', '/cgi-bin/'],
-        allowedPaths: ['/'],
-        crawlDelaySeconds: 1
-      };
-
-      this.robotsCache.set(origin, rules);
-      return !rules.disallowedPaths.some(dis => path.startsWith(dis));
+      return isAllowedByRobots(urlStr, rules);
     } catch {
       return true;
     }
@@ -180,26 +329,93 @@ export class CrawlerService {
       const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       const response = await fetch(normalized, {
-        headers: { 'User-Agent': this.userAgent },
+        headers: {
+          "User-Agent": "ANTIQUORA/1.0",
+        },
+        redirect: "follow",
         signal: controller.signal
       });
 
       clearTimeout(timeoutId);
 
-      const statusCode = response.status;
-      if (statusCode !== 200) {
-        return null;
-      }
-
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
-        return null;
+      if (!response.ok) {
+        throw new Error(
+          `Failed to fetch ${normalized}: HTTP ${response.status}`
+        );
       }
 
       const html = await response.text();
-      const parsedDoc = this.parseHtmlContent(normalized, html, statusCode);
 
-      if (parsedDoc && !parsedDoc.isNoIndex) {
+      if (!html.trim()) {
+        throw new Error("Empty document received");
+      }
+
+      const headers = Object.fromEntries(
+        response.headers.entries()
+      );
+
+      const document = parseHtml(html);
+
+      const robotsHeader =
+        headers["x-robots-tag"] || "";
+
+      const metaRobots =
+        document
+          .querySelector('meta[name="robots"]')
+          ?.getAttribute("content") || "";
+
+      const robotsContent =
+        `${robotsHeader},${metaRobots}`.toLowerCase();
+
+      const isNoIndex =
+        robotsContent
+          .split(",")
+          .map(x => x.trim())
+          .includes("noindex");
+
+      const domain = this.extractDomain(normalized);
+      const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : `${domain} Page`;
+
+      // IMPORTANT:
+      // Do not continue to synthetic fallback.
+      if (isNoIndex) {
+        const doc: CrawledDocument = {
+          id: `doc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          url: normalized,
+          title,
+          description: "",
+          snippet: "",
+          bodyText: "",
+          keywords: [],
+          contentHash: this.computeContentHash(""),
+          domain,
+          crawledAt: new Date().toISOString(),
+          statusCode: response.status,
+          contentType: response.headers.get('content-type') || 'text/html',
+          headings: [],
+          outboundLinks: [],
+          language: 'en',
+          canonicalUrl: normalized,
+          wordCount: 0,
+          metaTags: {},
+          isNoIndex: true,
+          isNoFollow: robotsContent.includes('nofollow'),
+          indexed: false,
+          pageRankScore: 1
+        };
+        this.crawledDocs.set(normalized, doc);
+        return doc;
+      }
+
+      const textContent = extractText(document);
+      const parsedDoc = this.parseHtmlContent(normalized, html, response.status);
+      if (parsedDoc) {
+        parsedDoc.indexed = !parsedDoc.isNoIndex;
+        if (textContent) {
+          parsedDoc.description = textContent.slice(0, 160);
+          parsedDoc.snippet = textContent.slice(0, 200);
+        }
         this.crawledDocs.set(normalized, parsedDoc);
         return parsedDoc;
       }
@@ -207,7 +423,6 @@ export class CrawlerService {
       console.warn(`[AntiqoraBot] Fetch warning for ${normalized}:`, e.message || e);
     }
 
-    // Return synthetic document fallback if live fetch is blocked by CORS/network in sandbox
     return this.createSyntheticCrawledDoc(normalized);
   }
 
@@ -364,4 +579,12 @@ export class CrawlerService {
       status: this.isRunning ? 'crawling' : 'idle'
     };
   }
+}
+
+export async function fetchAndParse(targetUrl: string): Promise<CrawledDocument> {
+  const doc = await CrawlerService.fetchAndParse(targetUrl);
+  if (!doc) {
+    throw new Error(`Failed to fetch ${targetUrl}`);
+  }
+  return doc;
 }

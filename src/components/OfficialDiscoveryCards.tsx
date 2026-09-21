@@ -10,6 +10,7 @@ import {
   Bookmark, 
   Check, 
   Link2, 
+  Share2,
   ShieldCheck, 
   AlertTriangle, 
   Smartphone, 
@@ -54,6 +55,30 @@ export const OfficialDiscoveryCards: React.FC<OfficialDiscoveryCardsProps> = ({
     setTimeout(() => {
       setCopiedLink((curr) => (curr === id ? null : curr));
     }, 2000);
+  };
+
+  const handleShare = async (title: string, url: string, description?: string, id?: string) => {
+    const shareData = {
+      title,
+      text: description ? `${title} — ${description.slice(0, 140)}...` : title,
+      url,
+    };
+
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        await navigator.share(shareData);
+        if (id) {
+          setCopiedLink(id);
+          setTimeout(() => setCopiedLink((curr) => (curr === id ? null : curr)), 2000);
+        }
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') {
+          handleCopy(url, id || 'share');
+        }
+      }
+    } else {
+      handleCopy(url, id || 'share');
+    }
   };
 
   const showWebsite = filterMode === 'all' || filterMode === 'websites';
@@ -127,6 +152,15 @@ export const OfficialDiscoveryCards: React.FC<OfficialDiscoveryCardsProps> = ({
 
               {/* Save & Copy Actions */}
               <div className="flex items-center gap-1.5 flex-shrink-0">
+                <button
+                  onClick={() => handleShare(officialWebsite.name || officialWebsite.title, officialWebsite.url, officialWebsite.description, officialWebsite.id)}
+                  className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition"
+                  title="Share official website"
+                  aria-label="Share official website"
+                >
+                  <Share2 className="w-4 h-4" />
+                </button>
+
                 <button
                   onClick={() => handleCopy(officialWebsite.url, officialWebsite.id)}
                   className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition"
@@ -271,32 +305,48 @@ export const OfficialDiscoveryCards: React.FC<OfficialDiscoveryCardsProps> = ({
                 </div>
               </div>
 
-              {/* Save App Bookmark */}
-              {onSaveApp && (
+              {/* Share & Save App Bookmark */}
+              <div className="flex items-center gap-1.5 flex-shrink-0">
                 <button
-                  onClick={() => onSaveApp({
-                    id: officialApp.id,
-                    title: `${officialApp.name} (Official App)`,
-                    url: officialApp.platforms.android?.storeUrl || officialApp.platforms.ios?.storeUrl || '#',
-                    domain: 'appstore',
-                    type: 'app',
-                    savedAt: new Date().toISOString()
-                  })}
-                  className={`p-2 rounded-xl border transition ${
-                    savedItemIds.includes(officialApp.id)
-                      ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-600 dark:text-indigo-400'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-400 hover:text-slate-800 dark:hover:text-white'
-                  }`}
-                  title={savedItemIds.includes(officialApp.id) ? "Saved to bookmarks" : "Save app"}
-                  aria-label="Save app bookmark"
-                >
-                  {savedItemIds.includes(officialApp.id) ? (
-                    <Check className="w-4 h-4" />
-                  ) : (
-                    <Bookmark className="w-4 h-4" />
+                  onClick={() => handleShare(
+                    officialApp.name,
+                    officialApp.platforms.android?.storeUrl || officialApp.platforms.ios?.storeUrl || window.location.href,
+                    officialApp.description,
+                    officialApp.id
                   )}
+                  className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-500/40 transition"
+                  title="Share official app"
+                  aria-label="Share official app"
+                >
+                  <Share2 className="w-4 h-4" />
                 </button>
-              )}
+
+                {onSaveApp && (
+                  <button
+                    onClick={() => onSaveApp({
+                      id: officialApp.id,
+                      title: `${officialApp.name} (Official App)`,
+                      url: officialApp.platforms.android?.storeUrl || officialApp.platforms.ios?.storeUrl || '#',
+                      domain: 'appstore',
+                      type: 'app',
+                      savedAt: new Date().toISOString()
+                    })}
+                    className={`p-2 rounded-xl border transition ${
+                      savedItemIds.includes(officialApp.id)
+                        ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-600 dark:text-indigo-400'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-400 hover:text-slate-800 dark:hover:text-white'
+                    }`}
+                    title={savedItemIds.includes(officialApp.id) ? "Saved to bookmarks" : "Save app"}
+                    aria-label="Save app bookmark"
+                  >
+                    {savedItemIds.includes(officialApp.id) ? (
+                      <Check className="w-4 h-4" />
+                    ) : (
+                      <Bookmark className="w-4 h-4" />
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Platform Badges, Rating & Category */}

@@ -18,6 +18,41 @@ export const AccountSyncView: React.FC<AccountSyncViewProps> = ({
   const [syncSettings, setSyncSettings] = useState(true);
   const [syncTabs, setSyncTabs] = useState(true);
 
+  const [syncEnabled, setSyncEnabled] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const handleSyncToggle = async () => {
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/account/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+        body: JSON.stringify({
+          enabled: !syncEnabled,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Sync service unavailable");
+      }
+
+      const data = await response.json();
+
+      setSyncEnabled(Boolean(data.enabled));
+    } catch {
+      // Do not pretend that sync happened.
+      alert(
+        "Cloud sync is currently unavailable."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col animate-in fade-in duration-200">
       
@@ -110,6 +145,22 @@ export const AccountSyncView: React.FC<AccountSyncViewProps> = ({
                 </div>
                 <input type="checkbox" checked={syncSettings} onChange={(e) => setSyncSettings(e.target.checked)} className="w-4 h-4 text-cyan-500 rounded" />
               </label>
+
+              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <button
+                  onClick={handleSyncToggle}
+                  disabled={loading}
+                  className="px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs hover:bg-cyan-400 disabled:opacity-50 transition"
+                >
+                  {loading ? 'Connecting...' : syncEnabled ? 'Disable Sync' : 'Enable Sync'}
+                </button>
+                <button
+                  disabled
+                  className="px-4 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-400 font-semibold text-xs cursor-not-allowed"
+                >
+                  Cloud Sync — Coming soon
+                </button>
+              </div>
             </div>
           )}
         </div>

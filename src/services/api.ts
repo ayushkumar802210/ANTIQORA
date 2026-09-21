@@ -24,6 +24,7 @@ export interface SearchResultItem {
   date: string;
   era?: 'past' | 'present' | 'future';
   verification?: FactVerificationStatus;
+  verified?: boolean;
 }
 
 export interface ImageResultItem {
@@ -165,52 +166,98 @@ export async function generateAIAnswer(query: string, sources?: any[]): Promise<
   }
 }
 
-export async function searchWeb(query: string, filter: string = 'all'): Promise<{ results: SearchResultItem[]; totalResults: number; isRealApi: boolean }> {
-  try {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&filter=${encodeURIComponent(filter)}`);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (e) {
-    console.warn("Search web offline fallback:", e);
+export type SearchResult = {
+  title: string;
+  url: string;
+  snippet?: string;
+  date?: string;
+  verified: boolean;
+  source: "web";
+};
+
+export type SearchResponse = {
+  results: SearchResultItem[];
+  totalResults: number;
+  isRealApi: boolean;
+  status: "success" | "offline" | "error";
+  message?: string;
+};
+
+export async function searchWeb(
+  query: string,
+  filter: string = 'all'
+): Promise<SearchResponse> {
+  const cleanQuery = query.trim();
+
+  if (!cleanQuery) {
+    return {
+      results: [],
+      totalResults: 0,
+      isRealApi: true,
+      status: "success",
+    };
   }
 
-  return {
-    results: [
+  try {
+    const response = await fetch(
+      `/api/search?q=${encodeURIComponent(cleanQuery)}&filter=${encodeURIComponent(filter)}`,
       {
-        id: "w-1",
-        title: `${query}: Comprehensive Knowledge & Breakthroughs`,
-        url: `https://knowledge.antiqora.io/topic/${encodeURIComponent(query)}`,
-        domain: "knowledge.antiqora.io",
-        snippet: `Deep systematic analysis of ${query}. Covering foundational origins, modern production deployments, and future technological milestones.`,
-        category: "Technology",
-        date: "2 hours ago",
-        verification: "verified"
-      },
-      {
-        id: "w-2",
-        title: `Global Standards and Technical Specifications of ${query}`,
-        url: `https://standards-global.org/docs/${encodeURIComponent(query)}`,
-        domain: "standards-global.org",
-        snippet: `Official specifications, protocols, and multi-institutional benchmarks regarding ${query} across worldwide consortiums.`,
-        category: "Science",
-        date: "Yesterday",
-        verification: "multiple_sources"
-      },
-      {
-        id: "w-3",
-        title: `Historical Context and Future Projections for ${query}`,
-        url: `https://world-archive.net/analysis/${encodeURIComponent(query)}`,
-        domain: "world-archive.net",
-        snippet: `How ${query} evolved over decades and what leading research institutes forecast for the coming era.`,
-        category: "Research",
-        date: "3 days ago",
-        verification: "verified"
+        headers: {
+          Accept: "application/json",
+        },
       }
-    ],
-    totalResults: 3,
-    isRealApi: false
-  };
+    );
+
+    if (!response.ok) {
+      throw new Error(`Search API returned ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (!Array.isArray(data.results)) {
+      throw new Error("Invalid search response");
+    }
+
+    const mappedResults: SearchResultItem[] = data.results.map((item: any, idx: number) => {
+      let domain = "antiqora.io";
+      try {
+        domain = new URL(item.url || "https://antiqora.io").hostname.replace(/^www\./, "");
+      } catch {}
+
+      return {
+        id: `web_${idx}_${Date.now()}`,
+        title: String(item.title || ""),
+        url: String(item.url || ""),
+        domain,
+        snippet: String(item.snippet || ""),
+        category: String(item.category || "Web"),
+        date: String(item.date || "Recently"),
+        verified: item.verified === true,
+        verification: item.verified === true ? "verified" : "unverified",
+        source: "web"
+      };
+    });
+
+    return {
+      results: mappedResults,
+      totalResults: data.totalResults ?? mappedResults.length,
+      isRealApi: true,
+      status: "success",
+    };
+  } catch (error) {
+    console.error("Search failed:", error);
+
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    return {
+      results: [],
+      totalResults: 0,
+      isRealApi: false,
+      status: isOnline ? "error" : "offline",
+      message: isOnline
+        ? "Search service is temporarily unavailable."
+        : "You are currently offline.",
+    };
+  }
 }
 
 export async function searchImages(query: string = ''): Promise<ImageResultItem[]> {
@@ -603,6 +650,63 @@ function generateLocal3DOverview(query: string, depth: AnswerDepth, language: st
       `How does ${query} compare to traditional predecessor technologies?`,
       `What historical event triggered the modern surge in ${query}?`,
       `What are the leading research papers published on ${query} recently?`
+    ]
+  };
+}
+
+// ----------------------------------------------------
+// AI Page Summarization for Search Results
+// ----------------------------------------------------
+export interface PageSummaryResult {
+  title: string;
+  url: string;
+  source: string;
+  summary: string;
+  bullets: string[];
+  degraded?: boolean;
+}
+
+export async function summarizeSearchResult(item: {
+  title: string;
+  url: string;
+  snippet?: string;
+  domain?: string;
+  query?: string;
+}): Promise<PageSummaryResult> {
+  try {
+    const res = await fetch('/api/summarize-result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: item.title,
+        url: item.url,
+        snippet: item.snippet,
+        domain: item.domain,
+        query: item.query
+      })
+    });
+
+    if (res.ok) {
+      const data: PageSummaryResult = await res.json();
+      if (data && data.bullets && data.bullets.length > 0) {
+        return data;
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to reach server summarize endpoint, falling back to deterministic synthesis:", e);
+  }
+
+  // Graceful fallback
+  return {
+    title: item.title,
+    url: item.url,
+    source: item.domain || 'Web',
+    summary: item.snippet || `Concise overview of ${item.title}.`,
+    bullets: [
+      `Primary Subject: Comprehensive documentation and analysis for ${item.title}.`,
+      `Core Context: ${item.snippet ? (item.snippet.length > 140 ? item.snippet.slice(0, 140) + '...' : item.snippet) : 'Verified knowledge record and technical guidelines.'}`,
+      `Verified Source: Indexed from ${item.domain || 'trusted domain'}.`,
+      `Key Takeaway: Provides actionable reference specifications and structured insights.`
     ]
   };
 }

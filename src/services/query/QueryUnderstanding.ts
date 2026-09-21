@@ -16,9 +16,14 @@ export interface QueryIntent {
 
 export class QueryUnderstandingService {
   private static dictionary = [
-    'youtube', 'github', 'electric vehicle', 'ev matlab', 'quantum computing',
-    'typescript', 'react', 'electrical engineering', 'matlab simulink', 'ai search engine',
-    'google maps', 'instagram', 'facebook', 'whatsapp', 'linkedin', 'reddit', 'wikipedia'
+    'quantum computing', 'quantum computing breakthroughs', 'quantum supremacy', 'quantum algorithms',
+    'electric vehicle', 'ev powertrain inverter physics', 'ev matlab simulation', 'electrical engineering',
+    'solid state battery electrolytes', 'matlab simulink microgrid control', 'matlab simulink',
+    'typescript 7 metaprogramming', 'typescript', 'react', 'next js', 'vite', 'webassembly runtimes',
+    'neural search engine architecture', 'inverted index bm25 ranking', 'artificial intelligence',
+    'ai search engine', 'spacex starship telemetry raptor', 'autonomous energy microgrids',
+    'wikipedia research assistant', 'google maps', 'youtube', 'github', 'instagram',
+    'facebook', 'whatsapp web', 'linkedin', 'reddit', 'wikipedia'
   ];
 
   /**
@@ -122,9 +127,22 @@ export class QueryUnderstandingService {
    * Fast autocomplete suggestion generator for search bar.
    */
   static getAutocompleteSuggestions(prefix: string): string[] {
-    if (!prefix || prefix.length < 2) return [];
+    if (!prefix || prefix.trim().length === 0) {
+      return this.dictionary.slice(0, 6);
+    }
     const lowerPrefix = prefix.toLowerCase().trim();
 
-    return this.dictionary.filter(word => word.startsWith(lowerPrefix) || word.includes(lowerPrefix)).slice(0, 6);
+    const prefixMatches: string[] = [];
+    const containsMatches: string[] = [];
+
+    for (const word of this.dictionary) {
+      if (word.startsWith(lowerPrefix)) {
+        prefixMatches.push(word);
+      } else if (word.includes(lowerPrefix)) {
+        containsMatches.push(word);
+      }
+    }
+
+    return [...prefixMatches, ...containsMatches].slice(0, 8);
   }
 }

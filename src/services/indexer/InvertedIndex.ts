@@ -6,6 +6,9 @@
 
 import { CrawledDocument } from '../crawler/CrawlerService';
 import { SearchResultItem } from '../api';
+import { tokenize, calculateCombinedScore } from '../ranking/RankingEngine';
+
+export { tokenize };
 
 export interface Posting {
   docId: string;
@@ -48,11 +51,7 @@ export class InvertedIndex {
    */
   static tokenize(text: string): string[] {
     if (!text) return [];
-    return text
-      .toLowerCase()
-      .replace(/[^\w\s-]/g, ' ')
-      .split(/\s+/)
-      .filter(term => term.length > 1 && !this.isStopword(term));
+    return tokenize(text).filter(term => term.length > 0 && !this.isStopword(term));
   }
 
   /**

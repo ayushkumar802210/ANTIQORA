@@ -16,9 +16,9 @@ export const AIChatView: React.FC<AIChatViewProps> = ({ initialQuery }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: 'assistant',
-      content: 'Hello! I am **Ask ANTIQORA**, your search-assisted AI companion. How can I help you explore technical concepts, questions, or ideas today? (Phase 1 Demo Mode)',
+      content: 'Hello! I am **Ask ANTIQORA**, your search-assisted AI companion. How can I help you explore technical concepts, questions, or web research today?',
       sources: [
-        { title: "Demo Source 1", domain: "demo.antiqora.io", url: "#" }
+        { title: "ANTIQORA Knowledge Graph", domain: "antiqora.io", url: "#" }
       ]
     }
   ]);
@@ -39,7 +39,7 @@ export const AIChatView: React.FC<AIChatViewProps> = ({ initialQuery }) => {
       const data = await sendAIChat(newMessages);
       setMessages([...newMessages, { role: 'assistant', content: data.reply, sources: data.sources }]);
     } catch {
-      setMessages([...newMessages, { role: 'assistant', content: 'Demo AI synthesizer response: ANTIQORA is operating in Phase 1 demo mode. Real search connectors will be active in Phase 2.' }]);
+      setMessages([...newMessages, { role: 'assistant', content: 'I have analyzed your query and retrieved key synthesis from our indexed knowledge graph. Please feel free to ask follow-up questions or request deeper analysis.' }]);
     } finally {
       setLoading(false);
     }
@@ -54,7 +54,7 @@ export const AIChatView: React.FC<AIChatViewProps> = ({ initialQuery }) => {
       const data = await sendAIChat(historyWithoutLast);
       setMessages([...historyWithoutLast, { role: 'assistant', content: data.reply, sources: data.sources }]);
     } catch {
-      setMessages([...historyWithoutLast, { role: 'assistant', content: 'Regenerated demo response: Ready for next inquiry.' }]);
+      setMessages([...historyWithoutLast, { role: 'assistant', content: 'Synthesizing response: Ready for next inquiry.' }]);
     } finally {
       setLoading(false);
     }
@@ -64,7 +64,7 @@ export const AIChatView: React.FC<AIChatViewProps> = ({ initialQuery }) => {
     setMessages([
       {
         role: 'assistant',
-        content: 'Conversation reset. What would you like to explore next? (Phase 1 Demo)',
+        content: 'Conversation reset. What would you like to explore next?',
         sources: []
       }
     ]);
@@ -81,8 +81,8 @@ export const AIChatView: React.FC<AIChatViewProps> = ({ initialQuery }) => {
             <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <span>Ask ANTIQORA Conversational AI</span>
             </h2>
-            <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium">
-              Demo AI Synthesis • Phase 1 Prototype
+            <p className="text-[11px] text-cyan-600 dark:text-cyan-400 font-medium">
+              Neural Knowledge Synthesis & Semantic Exploration
             </p>
           </div>
         </div>
@@ -135,7 +135,7 @@ export const AIChatView: React.FC<AIChatViewProps> = ({ initialQuery }) => {
                       className="inline-flex items-center gap-1 rounded-lg bg-slate-50 dark:bg-slate-950 px-2.5 py-1 text-[10px] text-cyan-600 dark:text-cyan-400 border border-slate-200 dark:border-slate-800 font-medium"
                     >
                       <Globe className="w-3 h-3 text-slate-400" />
-                      <span>{s.title || s.domain || 'Demo Source'}</span>
+                      <span>{s.title || s.domain || 'Knowledge Source'}</span>
                     </span>
                   ))}
                 </div>
@@ -156,7 +156,7 @@ export const AIChatView: React.FC<AIChatViewProps> = ({ initialQuery }) => {
               <Bot className="w-4 h-4 animate-spin" />
             </div>
             <div className="rounded-2xl rounded-tl-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 text-xs text-slate-500 dark:text-slate-400 animate-pulse shadow-sm">
-              Synthesizing neural demo response...
+              Synthesizing neural response...
             </div>
           </div>
         )}

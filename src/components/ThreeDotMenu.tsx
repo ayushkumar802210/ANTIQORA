@@ -10,12 +10,14 @@ import {
   Download, 
   Bookmark, 
   RefreshCw, 
+  RotateCcw,
   History, 
   Settings, 
   Palette, 
   HelpCircle,
   MoreVertical,
-  Check
+  Check,
+  Brain
 } from 'lucide-react';
 import { FullPageView } from '../types';
 import { usePWAInstall } from '../hooks/usePWAInstall';
@@ -28,6 +30,7 @@ interface ThreeDotMenuProps {
   onOpenAIMode: () => void;
   onOpenGitHub: () => void;
   onNavigateFullPage: (view: FullPageView) => void;
+  onReload?: () => void;
   tabCount?: number;
   incognitoCount?: number;
 }
@@ -40,6 +43,7 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
   onOpenAIMode,
   onOpenGitHub,
   onNavigateFullPage,
+  onReload,
   tabCount = 1,
   incognitoCount = 0
 }) => {
@@ -101,6 +105,18 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
 
       <div className="space-y-0.5 max-h-[80vh] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700">
         {/* Section 1: Tabs */}
+        <button
+          onClick={() => handleAction(() => onReload?.())}
+          className="w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-slate-200 hover:bg-cyan-500/10 hover:text-cyan-600 dark:hover:text-cyan-400 transition group"
+          role="menuitem"
+        >
+          <div className="flex items-center gap-2.5">
+            <RotateCcw className="w-4 h-4 text-slate-400 dark:text-slate-500 group-hover:text-cyan-500" />
+            <span>Reload page</span>
+          </div>
+          <kbd className="text-[10px] text-slate-400 font-mono">Ctrl+R</kbd>
+        </button>
+
         <button
           onClick={() => handleAction(() => onNewTab(false))}
           className="w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-slate-200 hover:bg-cyan-500/10 hover:text-cyan-600 dark:hover:text-cyan-400 transition group"
@@ -177,6 +193,15 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
         >
           <Github className="w-4 h-4 text-slate-400 dark:text-slate-500 group-hover:text-cyan-500" />
           <span>GitHub</span>
+        </button>
+
+        <button
+          onClick={() => handleAction(() => onNavigateFullPage('research-assistant'))}
+          className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition group"
+          role="menuitem"
+        >
+          <Brain className="w-4 h-4 text-slate-400 dark:text-slate-500 group-hover:text-cyan-500" />
+          <span>Research Assistant</span>
         </button>
 
         <button

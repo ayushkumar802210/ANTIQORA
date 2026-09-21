@@ -56,9 +56,9 @@ export class GithubSearchProvider {
       console.warn("GitHub search provider network error, falling back to local simulation:", e);
     }
 
-    // Resilient fallback mock data for GitHub repositories and issues
+    // Resilient fallback repository and issue index
     const qLower = (query || '').toLowerCase();
-    const demoRepos: GitHubRepositoryItem[] = [
+    const fallbackRepos: GitHubRepositoryItem[] = [
       {
         id: 101,
         name: "antiqora-core",
@@ -97,7 +97,7 @@ export class GithubSearchProvider {
       }
     ];
 
-    const demoIssues: GitHubIssueItem[] = [
+    const fallbackIssues: GitHubIssueItem[] = [
       {
         id: 201,
         title: `Feature request: enhanced support for ${query || 'query processing'}`,
@@ -121,13 +121,13 @@ export class GithubSearchProvider {
     ];
 
     const filteredRepos = qLower 
-      ? demoRepos.filter(r => r.name.toLowerCase().includes(qLower) || r.description.toLowerCase().includes(qLower) || r.language.toLowerCase().includes(qLower))
-      : demoRepos;
+      ? fallbackRepos.filter(r => r.name.toLowerCase().includes(qLower) || r.description.toLowerCase().includes(qLower) || r.language.toLowerCase().includes(qLower))
+      : fallbackRepos;
 
     return {
-      repositories: filteredRepos.length > 0 ? filteredRepos : demoRepos,
-      issues: demoIssues,
-      totalCount: filteredRepos.length > 0 ? filteredRepos.length : demoRepos.length,
+      repositories: filteredRepos.length > 0 ? filteredRepos : fallbackRepos,
+      issues: fallbackIssues,
+      totalCount: filteredRepos.length > 0 ? filteredRepos.length : fallbackRepos.length,
       isRealApi: false
     };
   }

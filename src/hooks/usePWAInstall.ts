@@ -58,25 +58,13 @@ export function usePWAInstall() {
       navigator.serviceWorker.getRegistration().then((reg) => {
         if (reg) {
           setSwRegistration(reg);
-          if (reg.waiting) {
-            setUpdateAvailable(true);
-          }
-          reg.addEventListener('updatefound', () => {
-            const installingWorker = reg.installing;
-            if (installingWorker) {
-              installingWorker.addEventListener('statechange', () => {
-                if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                  setUpdateAvailable(true);
-                }
-              });
-            }
-          });
+          // Do not automatically flag updateAvailable or trigger reload alerts on startup to avoid unexpected update messages
         }
       });
 
-      // Handle controllerchange to trigger page reload
+      // Do not reload on controllerchange to prevent automatic page reloads/infinite reload loops on link click
       const handleControllerChange = () => {
-        window.location.reload();
+        console.log('Service worker controller updated successfully');
       };
       navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
 

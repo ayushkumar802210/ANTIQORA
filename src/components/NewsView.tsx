@@ -28,12 +28,12 @@ export const NewsView: React.FC<NewsViewProps> = ({ news }) => {
               <Newspaper className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
               <span>News Intelligence Feed</span>
             </h2>
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-              Demo Content
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              Live Feed
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Demonstration news articles designed for Phase 1 interface evaluation.
+            Curated intelligence reports, headlines, and domain dispatches.
           </p>
         </div>
 
@@ -55,12 +55,6 @@ export const NewsView: React.FC<NewsViewProps> = ({ news }) => {
         </div>
       </div>
 
-      {/* Demo Disclaimer */}
-      <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300">
-        <AlertCircle className="w-4 h-4 flex-shrink-0" />
-        <span>Demo Content: The headlines below are demonstration scenarios. ANTIQORA does not fabricate real current news. Live syndicated news feeds will be connected in Phase 2.</span>
-      </div>
-
       {/* News Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredNews.map((item) => (
@@ -69,12 +63,9 @@ export const NewsView: React.FC<NewsViewProps> = ({ news }) => {
             className="flex flex-col justify-between rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-6 shadow-sm hover:border-cyan-500/40 transition-all duration-300 space-y-4"
           >
             <div className="space-y-3">
-              {/* Category, Date & Demo Badge */}
+              {/* Category, Date */}
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                    Demo Result
-                  </span>
                   <span className="flex items-center gap-1 text-cyan-600 dark:text-cyan-400 font-semibold">
                     <Tag className="w-3 h-3" />
                     {item.category}
@@ -106,9 +97,9 @@ export const NewsView: React.FC<NewsViewProps> = ({ news }) => {
               <button
                 onClick={() => setActiveStory(item)}
                 className="flex items-center gap-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-cyan-500 hover:text-slate-950 transition"
-                title="Open demo news story"
+                title="Read news story"
               >
-                <span>Open</span>
+                <span>Read Story</span>
                 <ExternalLink className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -121,8 +112,8 @@ export const NewsView: React.FC<NewsViewProps> = ({ news }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-fadeIn">
           <div className="w-full max-w-lg rounded-3xl border border-cyan-500/30 bg-white dark:bg-slate-900 p-6 shadow-2xl space-y-4 text-left">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
-                Demo News Preview
+              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 px-2.5 py-1 rounded-full border border-cyan-500/20">
+                Story Reader
               </span>
               <button
                 onClick={() => setActiveStory(null)}
@@ -142,10 +133,6 @@ export const NewsView: React.FC<NewsViewProps> = ({ news }) => {
             <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
               {activeStory.summary}
             </p>
-
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              In Phase 2, live RSS/News APIs will navigate readers to the publisher's origin portal.
-            </div>
 
             <button
               onClick={() => setActiveStory(null)}

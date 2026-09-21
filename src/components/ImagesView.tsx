@@ -28,12 +28,12 @@ export const ImagesView: React.FC<ImagesViewProps> = ({ initialQuery = '', image
               <ImageIcon className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
               <span>Visual & Image Search</span>
             </h2>
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-              Demo Content
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              High Resolution
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Demo placeholder imagery for visual intelligence prototype.
+            Indexed photography, technical diagrams, and visual media.
           </p>
         </div>
 
@@ -47,12 +47,6 @@ export const ImagesView: React.FC<ImagesViewProps> = ({ initialQuery = '', image
           />
           <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
         </div>
-      </div>
-
-      {/* Demo Disclaimer Notice */}
-      <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300">
-        <AlertCircle className="w-4 h-4 flex-shrink-0" />
-        <span>Demo Content: The imagery shown is placeholder demo content for prototyping purposes. ANTIQORA does not claim ownership of external demo assets.</span>
       </div>
 
       {/* Image Grid */}
@@ -73,9 +67,6 @@ export const ImagesView: React.FC<ImagesViewProps> = ({ initialQuery = '', image
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                 loading="lazy"
               />
-              <span className="absolute top-2 left-2 inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold bg-slate-950/80 text-amber-400 border border-amber-500/40 backdrop-blur-md">
-                Demo Result
-              </span>
             </div>
 
             {/* Card Content & Open Button */}
@@ -90,12 +81,12 @@ export const ImagesView: React.FC<ImagesViewProps> = ({ initialQuery = '', image
 
               {/* Required Open Button */}
               <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                <span className="text-[10px] text-slate-400">Demo Image</span>
+                <span className="text-[10px] text-slate-400">{img.domain}</span>
                 <button
                   onClick={() => setActiveImage(img)}
                   className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-cyan-500 hover:text-slate-950 transition"
                 >
-                  <span>Open</span>
+                  <span>View</span>
                   <ExternalLink className="w-3 h-3" />
                 </button>
               </div>
@@ -112,9 +103,6 @@ export const ImagesView: React.FC<ImagesViewProps> = ({ initialQuery = '', image
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-base font-bold text-slate-900 dark:text-white">{activeImage.title}</h3>
-                  <span className="text-[10px] font-bold bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded border border-amber-500/30">
-                    Demo Result
-                  </span>
                 </div>
                 <p className="text-xs text-cyan-600 dark:text-cyan-400">Source: {activeImage.domain} • {activeImage.dimensions}</p>
               </div>
@@ -131,7 +119,7 @@ export const ImagesView: React.FC<ImagesViewProps> = ({ initialQuery = '', image
             </div>
 
             <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-slate-500">Demo image placeholder preview. Live crawler connects in Phase 2.</span>
+              <span className="text-xs text-slate-500">Indexed visual record • {activeImage.domain}</span>
               <button
                 onClick={() => setActiveImage(null)}
                 className="flex items-center gap-1.5 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition"

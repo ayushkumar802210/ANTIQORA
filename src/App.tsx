@@ -24,6 +24,7 @@ import {
   NewTabCustomization,
   FullPageView
 } from './types';
+import { safeParse, isTabGroupArray } from './services/storageUtils';
 import { 
   searchWeb, 
   searchImages, 
@@ -43,23 +44,28 @@ import {
   searchWebsites,
   searchApps
 } from './services/api';
+import { trendingSearchesService } from './services/trendingSearchesService';
 
 // Components
 import { PWAController } from './components/PWAController';
 import { Navbar } from './components/Navbar';
 import { BrowserTabBar } from './components/BrowserTabBar';
 import { MobileTabSwitcher } from './components/MobileTabSwitcher';
+import { MobileBottomNav } from './components/MobileBottomNav';
+import { MobileMenuDrawer } from './components/MobileMenuDrawer';
 import { HomeView } from './components/HomeView';
 import { SearchResultsView } from './components/SearchResultsView';
 import { TimelineView } from './components/TimelineView';
 import { FutureView } from './components/FutureView';
 import { ResearchView } from './components/ResearchView';
+import { ResearchAssistantView } from './components/ResearchAssistantView';
 import { CompareView } from './components/CompareView';
 import { TranslateView } from './components/TranslateView';
 import { ImagesView } from './components/ImagesView';
 import { NewsView } from './components/NewsView';
 import { VideosView } from './components/VideosView';
 import { PlacesView } from './components/PlacesView';
+import { LocationView } from './components/LocationView';
 import { ShoppingView } from './components/ShoppingView';
 import { AIChatView } from './components/AIChatView';
 
@@ -139,12 +145,18 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [tabGroups, setTabGroups] = useState<TabGroup[]>(() => {
-    const saved = localStorage.getItem('antiqora_tab_groups');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [tabGroups, setTabGroups] =
+    useState<TabGroup[]>(
+      () =>
+        safeParse(
+          "tabGroups",
+          [],
+          isTabGroupArray
+        )
+    );
 
   const [isMobileTabSwitcherOpen, setIsMobileTabSwitcherOpen] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isTabGroupModalOpen, setIsTabGroupModalOpen] = useState(false);
 
   // Active Tab Derived State
@@ -310,27 +322,6 @@ export default function App() {
     sessionStorage.setItem('antiqora_startup_seen', 'true');
   }, []);
 
-  // Keyboard shortcut Ctrl+K
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const isCtrlK = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k';
-      if (isCtrlK) {
-        e.preventDefault();
-        const navbarInput = document.getElementById('antiqora-navbar-search') as HTMLInputElement | null;
-        const homeInput = document.getElementById('antiqora-main-search') as HTMLInputElement | null;
-        if (navbarInput) {
-          navbarInput.focus();
-          navbarInput.select();
-        } else if (homeInput) {
-          homeInput.focus();
-          homeInput.select();
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
   // TAB ACTIONS
   const handleCreateNewTab = useCallback((isIncognito: boolean = false) => {
     const newId = 'tab_' + Date.now();
@@ -420,7 +411,10 @@ export default function App() {
   }, []);
 
   // SEARCH EXECUTION
-  const executeSearch = async (queryText: string, targetTab: TabType = 'all') => {
+  const executeSearch = async (queryText: string, targetTab: TabType = 'all', e?: React.FormEvent | React.MouseEvent | React.KeyboardEvent | Event) => {
+    if (e) {
+      e.preventDefault();
+    }
     const trimmed = queryText.trim();
     if (!trimmed) return;
     
@@ -448,6 +442,8 @@ export default function App() {
     });
 
     if (!activeTab.isIncognito) {
+      trendingSearchesService.recordQueryUsage(trimmed);
+
       setHistoryItems(prev => [{
         id: 'h_' + Date.now(),
         query: trimmed,
@@ -508,6 +504,41 @@ export default function App() {
     }
   };
 
+  const handleReload = useCallback(() => {
+    const q = activeTab.query || activeTab.searchQuery;
+    if (q) {
+      executeSearch(q, currentTab);
+    } else {
+      window.location.reload();
+    }
+  }, [activeTab.query, activeTab.searchQuery, currentTab]);
+
+  // Keyboard shortcut Ctrl+K & Ctrl+R
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isCtrlK = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k';
+      const isCtrlR = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r';
+
+      if (isCtrlK) {
+        e.preventDefault();
+        const navbarInput = document.getElementById('antiqora-navbar-search') as HTMLInputElement | null;
+        const homeInput = document.getElementById('antiqora-main-search') as HTMLInputElement | null;
+        if (navbarInput) {
+          navbarInput.focus();
+          navbarInput.select();
+        } else if (homeInput) {
+          homeInput.focus();
+          homeInput.select();
+        }
+      } else if (isCtrlR) {
+        e.preventDefault();
+        handleReload();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleReload]);
+
   // BROWSER NAVIGATION (Back, Forward, Reload, Home)
   const canGoBack = (activeTab.historyIndex || 0) > 0;
   const canGoForward = (activeTab.historyIndex || 0) < (activeTab.historyStack?.length || 1) - 1;
@@ -532,13 +563,6 @@ export default function App() {
       historyIndex: newIdx,
       url: nextUrl
     });
-  };
-
-  const handleReload = () => {
-    const q = activeTab.query || activeTab.searchQuery;
-    if (q) {
-      executeSearch(q, currentTab);
-    }
   };
 
   const handleGoHome = () => {
@@ -663,6 +687,12 @@ export default function App() {
             onOpenAuth={() => setIsAuthOpen(true)}
           />
         );
+      case 'research-assistant':
+        return (
+          <ResearchAssistantView
+            query={activeQuery || "Quantum Computing"}
+          />
+        );
     }
   }
 
@@ -694,6 +724,8 @@ export default function App() {
         onDuplicateTab={handleDuplicateTab}
         onPinTab={handlePinTab}
         tabGroups={tabGroups}
+        onOpenMobileSwitcher={() => setIsMobileTabSwitcherOpen(true)}
+        onOpenTabGroupModal={() => setIsTabGroupModalOpen(true)}
       />
 
       {/* NAVIGATION HEADER & THREE-DOT MENU */}
@@ -723,7 +755,7 @@ export default function App() {
         showSearchBar={currentTab !== 'home'}
         searchQuery={searchQuery}
         onSearchChange={(q) => handleUpdateTab(activeTabId, { query: q, searchQuery: q })}
-        onExecuteSearch={() => executeSearch(searchQuery, currentTab)}
+        onExecuteSearch={(e) => executeSearch(searchQuery, currentTab, e)}
         onVoiceSearch={() => setIsVoiceOpen(true)}
 
         // Browser Nav & Three Dot
@@ -749,6 +781,7 @@ export default function App() {
           <HomeView
             onSearch={(q, tab) => executeSearch(q, (tab as TabType) || 'all')}
             recentSearches={recentSearches}
+            historyItems={historyItems}
             onDeleteRecent={(q) => setRecentSearches(prev => prev.filter(r => r !== q))}
             onClearRecent={() => setRecentSearches([])}
             onOpenVoice={() => setIsVoiceOpen(true)}
@@ -821,6 +854,12 @@ export default function App() {
           />
         )}
 
+        {currentTab === 'research-assistant' && (
+          <ResearchAssistantView
+            query={activeQuery || "Quantum Computing"}
+          />
+        )}
+
         {currentTab === 'compare' && (
           <CompareView
             initialTopic={activeQuery || "Quantum Computing"}
@@ -847,6 +886,10 @@ export default function App() {
           <PlacesView places={places} isLoading={isSearchLoading} />
         )}
 
+        {currentTab === 'location' && (
+          <LocationView initialSearchQuery={activeQuery} />
+        )}
+
         {currentTab === 'shopping' && (
           <ShoppingView products={products} isLoading={isSearchLoading} />
         )}
@@ -855,6 +898,48 @@ export default function App() {
           <AIChatView initialQuery={activeQuery} />
         )}
       </main>
+
+      {/* MOBILE BOTTOM NAVIGATION BAR */}
+      <MobileBottomNav
+        currentTab={currentTab}
+        onSelectTab={(tab) => {
+          if (tab === 'home') {
+            handleUpdateTab(activeTabId, { currentSubTab: 'home', currentTab: 'home' });
+          } else {
+            handleUpdateTab(activeTabId, { currentSubTab: tab, currentTab: tab });
+            if (!activeQuery && tab !== 'chat' && tab !== 'translate') {
+              executeSearch("Quantum Computing", tab);
+            }
+          }
+        }}
+        onGoHome={handleGoHome}
+        tabCount={tabs.length}
+        onOpenTabsSwitcher={() => setIsMobileTabSwitcherOpen(true)}
+        onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+        onNavigateFullPage={(v) => setFullPageView(v)}
+        isIncognito={activeTab.isIncognito}
+      />
+
+      {/* MOBILE MENU DRAWER */}
+      <MobileMenuDrawer
+        isOpen={isMobileMenuOpen}
+        onClose={() => setIsMobileMenuOpen(false)}
+        user={user}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        theme={theme}
+        onToggleTheme={handleToggleTheme}
+        currentLanguage={currentLanguage}
+        onSelectLanguage={setCurrentLanguage}
+        onNewTab={(incognito) => handleCreateNewTab(incognito)}
+        onNavigateFullPage={(v) => setFullPageView(v)}
+        onSelectTab={(tab) => handleUpdateTab(activeTabId, { currentSubTab: tab, currentTab: tab })}
+        onOpenVisual={() => setIsVisualOpen(true)}
+        onOpenDocument={() => setIsDocOpen(true)}
+        onOpenRoadmap={() => setIsRoadmapOpen(true)}
+        onOpenCrawlerAdmin={() => setIsSearchAdminOpen(true)}
+        onReload={handleReload}
+        isIncognito={activeTab.isIncognito}
+      />
 
       {/* MOBILE BOTTOM TAB SWITCHER BAR */}
       <MobileTabSwitcher

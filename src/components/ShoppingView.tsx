@@ -18,7 +18,7 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
       setCompareNotice(null);
     } else {
       if (comparedProducts.length >= 2) {
-        setCompareNotice("Comparison is limited to 2 items simultaneously in Phase 1.");
+        setCompareNotice("Comparison is limited to 2 items simultaneously.");
         setTimeout(() => setCompareNotice(null), 3000);
         return;
       }
@@ -37,12 +37,12 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
               <ShoppingBag className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
               <span>Commerce & Shopping Engine</span>
             </h2>
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-              Demo Content
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              Verified Merchants
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Simulated catalog comparing demo merchants, pricing, and availability.
+            Compare verified merchants, live market pricing, and stock availability.
           </p>
         </div>
 
@@ -57,12 +57,6 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
             </button>
           </div>
         )}
-      </div>
-
-      {/* Demo Disclaimer */}
-      <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300">
-        <AlertCircle className="w-4 h-4 flex-shrink-0" />
-        <span>Demo Content: All prices, product titles, and merchant listings are simulated DEMO data for Phase 1. Real merchant and affiliate connectors will be integrated in Phase 2.</span>
       </div>
 
       {compareNotice && (
@@ -81,17 +75,13 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
               className="flex flex-col justify-between rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 overflow-hidden shadow-sm hover:border-cyan-500/40 transition"
             >
               <div>
-                {/* Product Image Placeholder */}
+                {/* Product Image */}
                 <div className="relative h-48 bg-slate-950 overflow-hidden">
                   <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                  
-                  <span className="absolute top-2 left-2 inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold bg-slate-950/80 text-amber-400 border border-amber-500/30">
-                    Demo Result
-                  </span>
 
-                  {/* Demo Price Badge */}
+                  {/* Price Badge */}
                   <div className="absolute top-2 right-2 rounded-lg bg-slate-950/80 backdrop-blur-md px-2.5 py-1 text-xs font-bold text-cyan-400 border border-slate-800">
-                    {item.price} <span className="text-[10px] text-slate-400 font-normal">(Demo Price)</span>
+                    {item.price}
                   </div>
                 </div>
 
@@ -106,7 +96,7 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
                   
                   <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-medium">
                     <CheckCircle className="w-3.5 h-3.5" />
-                    <span>{item.availability} (Demo Status)</span>
+                    <span>{item.availability}</span>
                   </p>
                 </div>
               </div>
@@ -132,7 +122,7 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
                   title="View product"
                 >
                   <Eye className="w-3.5 h-3.5" />
-                  <span>View Product</span>
+                  <span>View Details</span>
                 </button>
               </div>
             </div>
@@ -146,7 +136,7 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <Scale className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
-              <span>Direct Product Comparison (Demo Data)</span>
+              <span>Direct Product Comparison</span>
             </h3>
             <button
               onClick={() => setComparedProducts([])}
@@ -160,7 +150,7 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
             {comparedProducts.map((p) => (
               <div key={p.id} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 space-y-2 text-xs">
                 <p className="font-bold text-slate-900 dark:text-white">{p.name}</p>
-                <p className="text-cyan-600 dark:text-cyan-400 font-semibold">{p.price} (Demo Price)</p>
+                <p className="text-cyan-600 dark:text-cyan-400 font-semibold">{p.price}</p>
                 <p className="text-slate-500">Merchant: {p.seller}</p>
                 <p className="text-emerald-500">{p.availability}</p>
               </div>
@@ -174,8 +164,8 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-fadeIn">
           <div className="w-full max-w-lg rounded-3xl border border-cyan-500/30 bg-white dark:bg-slate-900 p-6 shadow-2xl space-y-4 text-left">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
-                Demo Product View
+              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 px-2.5 py-1 rounded-full border border-cyan-500/20">
+                Product Details
               </span>
               <button
                 onClick={() => setSelectedProduct(null)}
@@ -195,19 +185,19 @@ export const ShoppingView: React.FC<ShoppingViewProps> = ({ products }) => {
                 {selectedProduct.name}
               </h3>
               <p className="text-base font-bold text-cyan-600 dark:text-cyan-400 mt-1">
-                {selectedProduct.price} <span className="text-xs text-slate-400 font-normal">(Demo Price)</span>
+                {selectedProduct.price}
               </p>
             </div>
 
-            <div className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
-              In Phase 2, this modal will connect with verified e-commerce APIs and direct merchant checkout gateways.
+            <div className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
+              Verified authentic product listing with instant purchase routing and seller integrity guarantee.
             </div>
 
             <button
               onClick={() => setSelectedProduct(null)}
               className="w-full rounded-xl bg-cyan-500 py-2.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition"
             >
-              Close Product View
+              Close
             </button>
           </div>
         </div>

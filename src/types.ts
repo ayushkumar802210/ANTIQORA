@@ -8,9 +8,11 @@ export type TabType =
   | 'videos' 
   | 'news' 
   | 'places' 
+  | 'location' 
   | 'shopping' 
   | 'github'
   | 'research' 
+  | 'research-assistant'
   | 'documents'
   | 'timeline' 
   | 'future' 
@@ -49,7 +51,7 @@ export interface SearchHistoryItem {
 export interface TabGroup {
   id: string;
   name: string;
-  color: string;
+  color?: string;
   tabIds?: string[];
 }
 
@@ -157,7 +159,8 @@ export type FullPageView =
   | 'recent-tabs'
   | 'account-sync'
   | 'customize-new-tab'
-  | 'help-feedback';
+  | 'help-feedback'
+  | 'research-assistant';
 
 export interface SavedItem {
   id: string;
@@ -279,7 +282,7 @@ export interface OfficialWebsiteResult {
   description: string;
   icon?: string;
   isVerified: boolean;
-  verificationBadge: 'Official Website' | 'Verified Platform' | 'Unverified Match';
+  verificationBadge: 'Official Website' | 'Verified Platform' | 'Unverified Match' | 'Web Result';
   verificationReason?: string;
   category: string;
   subDestinations?: OfficialSubDestination[];

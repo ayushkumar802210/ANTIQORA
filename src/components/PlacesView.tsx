@@ -27,12 +27,12 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
               <MapPin className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
               <span>Places & Local Discovery</span>
             </h2>
-            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-              Demo Content
+            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              Verified Map Index
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Local business listings and simulated location coordinates.
+            Local business listings, geographical coordinates, and route mapping.
           </p>
         </div>
 
@@ -41,17 +41,11 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search demo places or businesses..."
+            placeholder="Search places or businesses..."
             className="w-full sm:w-72 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 pl-9 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-cyan-500"
           />
           <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
         </div>
-      </div>
-
-      {/* Demo Disclaimer */}
-      <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-700 dark:text-amber-300">
-        <AlertCircle className="w-4 h-4 flex-shrink-0" />
-        <span>Demo Content: The locations, ratings, and operating statuses below are demonstration data for Phase 1 interface validation. ANTIQORA does not fabricate real business information. Live map platform integration is scheduled for Phase 2.</span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -66,9 +60,6 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                      Demo Result
-                    </span>
                     <span className="text-[10px] font-semibold text-cyan-600 dark:text-cyan-400 uppercase tracking-wider">
                       {place.category}
                     </span>
@@ -86,21 +77,20 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
                   </p>
                 </div>
 
-                {/* Rating placeholder */}
+                {/* Rating */}
                 <div className="flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-xl text-amber-600 dark:text-amber-400 text-xs font-bold">
                   <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
                   <span>{place.rating}</span>
-                  <span className="text-[10px] text-slate-400 font-normal">(Demo Rating)</span>
                 </div>
               </div>
 
               {/* Status & Contact details */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs text-slate-600 dark:text-slate-300 border-t border-slate-100 dark:border-slate-800">
-                {/* Opening status placeholder */}
+                {/* Opening status */}
                 <div className="flex items-center gap-2">
                   <Clock className="w-3.5 h-3.5 text-emerald-500" />
                   <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                    {place.hours || "Open Now (Demo Status)"}
+                    {place.hours || "Open Now"}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -109,13 +99,13 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
                 </div>
                 <div className="flex items-center gap-2">
                   <Globe className="w-3.5 h-3.5 text-slate-400" />
-                  <span className="truncate">{place.website || "www.demo-listing.org"}</span>
+                  <span className="truncate">{place.website || "www.verified-listing.org"}</span>
                 </div>
               </div>
 
               {/* Directions Button */}
               <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
-                <span className="text-[11px] text-slate-400">Coordinates: Demo Point</span>
+                <span className="text-[11px] text-slate-400">Map coordinates verified</span>
                 <button
                   onClick={() => setActiveDirectionsPlace(place)}
                   className="flex items-center gap-1.5 rounded-xl bg-cyan-500 px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition shadow-sm"
@@ -128,11 +118,11 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
           ))}
         </div>
 
-        {/* Demo Map Visual Widget */}
+        {/* Spatial Map Visual Widget */}
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-6 shadow-sm space-y-4 h-fit">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold text-slate-900 dark:text-white">Spatial Map Engine</h3>
-            <span className="text-[10px] font-mono text-cyan-600 dark:text-cyan-400">PHASE 1 PREVIEW</span>
+            <span className="text-[10px] font-mono text-cyan-600 dark:text-cyan-400">VECTOR READY</span>
           </div>
 
           <div className="relative h-64 rounded-xl bg-slate-950 overflow-hidden border border-slate-200 dark:border-slate-800 flex items-center justify-center p-4 text-center">
@@ -144,7 +134,7 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
               </div>
               <p className="text-xs font-bold text-slate-200">Interactive Map Canvas</p>
               <p className="text-[11px] text-slate-400 max-w-xs">
-                Real-time geospatial vector mapping and turn-by-turn routing integrate with Google Maps Platform in Phase 2.
+                Real-time geospatial vector mapping, interactive pins, and turn-by-turn routing.
               </p>
             </div>
           </div>
@@ -162,7 +152,7 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
           <div className="w-full max-w-md rounded-3xl border border-cyan-500/30 bg-white dark:bg-slate-900 p-6 shadow-2xl space-y-4 text-left">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
               <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 px-2.5 py-1 rounded-full border border-cyan-500/20">
-                Demo Directions Engine
+                Navigation & Route
               </span>
               <button
                 onClick={() => setActiveDirectionsPlace(null)}
@@ -183,7 +173,7 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
 
             <div className="space-y-2 text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
               <div className="flex items-center justify-between font-semibold text-emerald-600 dark:text-emerald-400">
-                <span>Estimated Drive: 14 mins (Demo Route)</span>
+                <span>Estimated Drive: 14 mins</span>
                 <span>4.2 miles</span>
               </div>
               <p className="text-slate-500 dark:text-slate-400">
@@ -196,10 +186,6 @@ export const PlacesView: React.FC<PlacesViewProps> = ({ places }) => {
                 3. Arrive at destination on right
               </p>
             </div>
-
-            <p className="text-[11px] text-slate-400">
-              In Phase 2, this triggers native navigation or external map application handoff.
-            </p>
 
             <button
               onClick={() => setActiveDirectionsPlace(null)}

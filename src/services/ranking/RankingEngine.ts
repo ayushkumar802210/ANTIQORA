@@ -5,6 +5,110 @@
  */
 
 import { SearchResultItem } from '../api';
+import { safeParse, Tab, isTabArray } from '../storageUtils';
+
+export { safeParse, isTabArray };
+export type { Tab };
+
+export type SearchDocument = {
+  id: string;
+  title: string;
+  content: string;
+  bm25Score: number;
+  popularityScore: number;
+  freshnessScore: number;
+  combinedScore: number;
+};
+
+export function calculateCombinedScore(
+  bm25: number,
+  popularity: number,
+  freshness: number
+): number {
+  return (
+    bm25 * 0.7 +
+    popularity * 0.2 +
+    freshness * 0.1
+  );
+}
+
+export function tokenize(text: string): string[] {
+  return text
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .match(/[\p{L}\p{M}\p{N}]+(?:[-'][\p{L}\p{M}\p{N}]+)*/gu)
+    ?? [];
+}
+
+export function sortSearchDocuments(results: SearchDocument[]): SearchDocument[] {
+  results.sort((a, b) => b.bm25Score - a.bm25Score);
+  results.sort(
+    (a, b) => b.combinedScore - a.combinedScore
+  );
+  return results;
+}
+
+export function matchesFilter(
+  document: SearchDocument,
+  filter: string
+): boolean {
+  switch (filter) {
+    case "fresh":
+      return document.freshnessScore >= 0.7;
+
+    case "popular":
+      return document.popularityScore >= 0.7;
+
+    default:
+      return true;
+  }
+}
+
+let documentStore: SearchDocument[] = [];
+
+export function setDocumentStore(docs: SearchDocument[]) {
+  documentStore = docs;
+}
+
+export function getMatchingDocuments(tokens: string[]): SearchDocument[] {
+  if (documentStore.length === 0) return [];
+  return documentStore.filter(doc => {
+    const text = `${doc.title} ${doc.content}`.toLowerCase();
+    return tokens.some(token => text.includes(token.toLowerCase()));
+  });
+}
+
+export function search(
+  query: string,
+  filter?: string
+): SearchDocument[] {
+  const tokens = tokenize(query);
+
+  if (tokens.length === 0) {
+    return [];
+  }
+
+  let results = getMatchingDocuments(tokens);
+
+  if (filter) {
+    results = results.filter(doc =>
+      matchesFilter(doc, filter)
+    );
+  }
+
+  results = results.map(doc => ({
+    ...doc,
+    combinedScore: calculateCombinedScore(
+      doc.bm25Score,
+      doc.popularityScore,
+      doc.freshnessScore
+    ),
+  }));
+
+  return results.sort(
+    (a, b) => b.combinedScore - a.combinedScore
+  );
+}
 
 export interface RankingSignals {
   bm25Score: number;

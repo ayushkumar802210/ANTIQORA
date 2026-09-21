@@ -22,7 +22,6 @@ self.addEventListener('install', (event) => {
       }
     })
   );
-  self.skipWaiting();
 });
 
 // Activate Event: Clean up legacy caches and claim clients immediately

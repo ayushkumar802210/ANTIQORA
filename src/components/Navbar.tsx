@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Logo } from './Logo';
-import { PWAInstallButton } from './PWAInstallButton';
 import { ThreeDotMenu } from './ThreeDotMenu';
 import { TabType, UserProfile, FullPageView } from '../types';
 import { SUPPORTED_LANGUAGES } from '../services/languages';
@@ -10,6 +9,7 @@ import {
   Newspaper, 
   Video, 
   MapPin, 
+  Navigation,
   ShoppingBag, 
   Sparkles, 
   User, 
@@ -34,7 +34,10 @@ import {
   RotateCcw,
   Home,
   MoreVertical,
-  EyeOff
+  EyeOff,
+  AlertCircle,
+  CheckCircle2,
+  ShieldCheck
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -50,7 +53,7 @@ interface NavbarProps {
   showSearchBar?: boolean;
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
-  onExecuteSearch?: () => void;
+  onExecuteSearch?: (e?: React.FormEvent | React.MouseEvent | React.KeyboardEvent) => void;
   onVoiceSearch?: () => void;
   onOpenVisual?: () => void;
   onOpenDocument?: () => void;
@@ -110,6 +113,91 @@ export const Navbar: React.FC<NavbarProps> = ({
   incognitoCount = 0
 }) => {
   const [isThreeDotOpen, setIsThreeDotOpen] = useState(false);
+  const [geoPermission, setGeoPermission] = useState<'granted' | 'prompt' | 'denied' | 'unknown'>('prompt');
+  const [showPermissionHelp, setShowPermissionHelp] = useState(false);
+  const [isLocatingFromHeader, setIsLocatingFromHeader] = useState(false);
+  const [isReloadSpinning, setIsReloadSpinning] = useState(false);
+
+  const handleReloadClick = () => {
+    setIsReloadSpinning(true);
+    setTimeout(() => setIsReloadSpinning(false), 750);
+    if (onReload) {
+      onReload();
+    }
+  };
+
+  // Check Geolocation permission state
+  useEffect(() => {
+    let permissionStatus: PermissionStatus | null = null;
+
+    const checkPermission = async () => {
+      if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
+        try {
+          const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+          permissionStatus = status;
+          setGeoPermission(status.state as 'granted' | 'prompt' | 'denied');
+          status.onchange = () => {
+            setGeoPermission(status.state as 'granted' | 'prompt' | 'denied');
+          };
+        } catch (e) {
+          // If query not supported, fallback gracefully
+        }
+      }
+    };
+
+    checkPermission();
+
+    const handleGeoEvent = (e: any) => {
+      if (e.detail?.state) {
+        setGeoPermission(e.detail.state);
+      }
+    };
+
+    window.addEventListener('antiqora:geolocation-updated', handleGeoEvent);
+    return () => {
+      window.removeEventListener('antiqora:geolocation-updated', handleGeoEvent);
+      if (permissionStatus) {
+        permissionStatus.onchange = null;
+      }
+    };
+  }, []);
+
+  // Request location directly from header button
+  const handleRequestLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser.');
+      return;
+    }
+    setIsLocatingFromHeader(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setIsLocatingFromHeader(false);
+        setGeoPermission('granted');
+        setShowPermissionHelp(false);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('antiqora:geolocation-updated', {
+              detail: { state: 'granted', coords: { lat: pos.coords.latitude, lng: pos.coords.longitude } }
+            })
+          );
+        }
+      },
+      (err) => {
+        setIsLocatingFromHeader(false);
+        if (err.code === err.PERMISSION_DENIED) {
+          setGeoPermission('denied');
+        }
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('antiqora:geolocation-updated', {
+              detail: { state: err.code === err.PERMISSION_DENIED ? 'denied' : 'prompt' }
+            })
+          );
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   const tabs = [
     { id: 'all', label: 'All', icon: Search },
@@ -124,6 +212,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'news', label: 'News', icon: Newspaper },
     { id: 'videos', label: 'Videos', icon: Video },
     { id: 'places', label: 'Places', icon: MapPin },
+    { id: 'location', label: 'Live Location', icon: Navigation },
     { id: 'shopping', label: 'Shopping', icon: ShoppingBag },
     { id: 'chat', label: 'AI Chat', icon: Sparkles },
   ] as const;
@@ -170,12 +259,12 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
 
             <button
-              onClick={onReload}
-              className="p-1.5 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              onClick={handleReloadClick}
+              className="p-1.5 rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition active:scale-95 cursor-pointer"
               title="Reload page"
               aria-label="Reload page"
             >
-              <RotateCcw className="w-4 h-4" />
+              <RotateCcw className={`w-4 h-4 transition-transform ${isReloadSpinning ? 'animate-spin text-cyan-500' : ''}`} />
             </button>
 
             <button
@@ -211,7 +300,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                   onChange={(e) => onSearchChange?.(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
-                      onExecuteSearch?.();
+                      e.preventDefault();
+                      onExecuteSearch?.(e);
                     } else if (e.key === 'Escape') {
                       (e.target as HTMLInputElement).blur();
                     }
@@ -253,7 +343,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                     </button>
                   )}
                   <button
-                    onClick={onExecuteSearch}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onExecuteSearch?.(e);
+                    }}
                     className="rounded-lg bg-cyan-500 px-2.5 py-0.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition"
                   >
                     Go
@@ -264,11 +357,81 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
         </div>
 
-        {/* Right Actions: PWA, Account, Three-Dot Menu */}
+        {/* Right Actions: Geolocation Status, PWA, Account, Three-Dot Menu */}
         <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0">
           
-          <PWAInstallButton />
+          {/* LocationView Header Visual Indicator */}
+          {currentTab === 'location' && (
+            <div className="flex items-center animate-in fade-in duration-200">
+              {geoPermission === 'granted' ? (
+                <div 
+                  id="antiqora-geo-status-indicator"
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold shadow-2xs select-none"
+                  title="Geolocation permission is active & enabled for ANTIQORA"
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <Navigation className="w-3.5 h-3.5 text-emerald-500" />
+                  <span className="hidden md:inline font-semibold">Location enabled for ANTIQORA</span>
+                  <span className="md:hidden font-semibold">Location ON</span>
+                </div>
+              ) : geoPermission === 'denied' ? (
+                <div className="relative">
+                  <button
+                    id="antiqora-geo-blocked-btn"
+                    onClick={() => setShowPermissionHelp(!showPermissionHelp)}
+                    className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-rose-500/10 dark:bg-rose-500/20 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold hover:bg-rose-500/20 transition cursor-pointer select-none"
+                    title="Location permission is blocked in your browser. Click for help."
+                  >
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-500" />
+                    <span className="hidden sm:inline">Location Blocked</span>
+                    <span className="sm:hidden">Blocked</span>
+                  </button>
 
+                  {showPermissionHelp && (
+                    <div className="absolute right-0 top-full mt-2 w-72 p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl z-50 text-xs text-slate-700 dark:text-slate-300">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                          <ShieldCheck className="w-4 h-4 text-cyan-500" />
+                          Enable Geolocation
+                        </span>
+                        <button
+                          onClick={() => setShowPermissionHelp(false)}
+                          className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+                        Click the lock/settings icon in your browser address bar, set <strong>Location</strong> to <strong>Allow</strong>, and retry.
+                      </p>
+                      <button
+                        onClick={handleRequestLocation}
+                        className="mt-2.5 w-full py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                      >
+                        <Navigation className="w-3.5 h-3.5" />
+                        Retry Permission
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button
+                  id="antiqora-geo-grant-btn"
+                  onClick={handleRequestLocation}
+                  disabled={isLocatingFromHeader}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950 text-xs font-bold transition shadow-xs animate-pulse select-none cursor-pointer"
+                  title="Click to grant location access for ANTIQORA"
+                >
+                  <MapPin className="w-3.5 h-3.5 text-slate-950" />
+                  <span>{isLocatingFromHeader ? 'Requesting...' : 'Grant Access'}</span>
+                </button>
+              )}
+            </div>
+          )}
+          
           <button
             onClick={onOpenAuth}
             className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/80 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:border-cyan-500/50 hover:text-cyan-600 dark:hover:text-cyan-400 transition shadow-sm"
@@ -303,6 +466,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onOpenAIMode={onOpenAIMode}
               onOpenGitHub={onOpenGitHub}
               onNavigateFullPage={onNavigateFullPage}
+              onReload={handleReloadClick}
               tabCount={tabCount}
               incognitoCount={incognitoCount}
             />
@@ -330,6 +494,17 @@ export const Navbar: React.FC<NavbarProps> = ({
                 >
                   <Icon className="w-3.5 h-3.5" />
                   <span>{tab.label}</span>
+                  {tab.id === 'location' && (
+                    <span 
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        geoPermission === 'granted' 
+                          ? 'bg-emerald-400 animate-pulse' 
+                          : geoPermission === 'denied'
+                          ? 'bg-rose-400'
+                          : 'bg-cyan-400 animate-ping'
+                      }`} 
+                    />
+                  )}
                 </button>
               );
             })}

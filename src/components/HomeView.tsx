@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Logo } from './Logo';
-import { PWAInstallButton } from './PWAInstallButton';
-import { AnswerDepth } from '../types';
+import { AnswerDepth, SearchHistoryItem } from '../types';
 import { SUPPORTED_LANGUAGES } from '../services/languages';
+import { SearchSuggestionsDropdown } from './SearchSuggestionsDropdown';
+import { computeSuggestions } from '../services/suggestionsService';
+import { trendingSearchesService } from '../services/trendingSearchesService';
 import { 
   Search, 
   Mic, 
@@ -14,12 +16,15 @@ import {
   ArrowRight, 
   ShieldCheck, 
   Globe2, 
+  Globe,
+  History,
+  ExternalLink,
   X,
   Settings,
   Sun,
   Moon,
   Monitor,
-  Camera,
+  ScanQrCode,
   FileText,
   Compass,
   Activity,
@@ -35,12 +40,15 @@ import {
   Terminal,
   Share2,
   Check,
-  RefreshCw
+  RefreshCw,
+  Smartphone,
+  Flame
 } from 'lucide-react';
 
 interface HomeViewProps {
   onSearch: (query: string, tab?: string) => void;
   recentSearches: string[];
+  historyItems?: SearchHistoryItem[];
   onDeleteRecent: (query: string) => void;
   onClearRecent: () => void;
   onOpenVoice: () => void;
@@ -58,6 +66,7 @@ interface HomeViewProps {
 export const HomeView: React.FC<HomeViewProps> = ({ 
   onSearch, 
   recentSearches, 
+  historyItems,
   onDeleteRecent,
   onClearRecent,
   onOpenVoice,
@@ -75,12 +84,206 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [isAiMode, setIsAiMode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedImageFile, setSelectedImageFile] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [serverSuggestions, setServerSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [activeDiscoverCategory, setActiveDiscoverCategory] = useState<'all' | 'engineering' | 'ai' | 'trending' | 'tools'>('all');
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const [usageTick, setUsageTick] = useState(0);
+
+  // Subscribe to usage updates from the trending searches service
+  useEffect(() => {
+    const unsubscribe = trendingSearchesService.subscribe(() => {
+      setUsageTick(t => t + 1);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Real-time suggestions calculated from query, recent searches, and server autocomplete
+  const suggestions = useMemo(() => {
+    return computeSuggestions(query, recentSearches, serverSuggestions);
+  }, [query, recentSearches, serverSuggestions]);
+
+  // Top 5 most frequently accessed URLs or search queries derived from search history
+  const recentlyVisitedItems = useMemo(() => {
+    let allHistory: SearchHistoryItem[] = historyItems && historyItems.length > 0 ? historyItems : [];
+    if (allHistory.length === 0) {
+      try {
+        const saved = localStorage.getItem('antiqora_history_items');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) allHistory = parsed;
+        }
+      } catch {}
+    }
+
+    const groupedMap = new Map<string, {
+      title: string;
+      target: string;
+      displayDomain: string;
+      isUrl: boolean;
+      count: number;
+      lastVisited: number;
+    }>();
+
+    // Group items by normalized target (url or query)
+    allHistory.forEach(item => {
+      const q = (item.query || '').trim();
+      const rawUrl = (item.url || '').trim();
+      
+      const isActualUrl = Boolean(
+        rawUrl && 
+        rawUrl !== 'antiqora://newtab' && 
+        !rawUrl.startsWith('antiqora://') &&
+        (rawUrl.startsWith('http') || rawUrl.includes('.'))
+      );
+
+      const target = isActualUrl ? rawUrl : q;
+      if (!target) return;
+
+      const normalizedKey = target.toLowerCase();
+      const ts = Number(item.timestamp) || Date.now();
+      
+      let derivedDomain = item.domain || '';
+      if (!derivedDomain && isActualUrl) {
+        try {
+          const u = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
+          derivedDomain = u.hostname.replace(/^www\./, '');
+        } catch {
+          derivedDomain = rawUrl.split('/')[0];
+        }
+      } else if (!derivedDomain) {
+        derivedDomain = 'Search Query';
+      }
+
+      const title = item.title && item.title !== 'New Tab' && item.title !== 'Search' 
+        ? item.title 
+        : (isActualUrl ? derivedDomain : q);
+
+      const existing = groupedMap.get(normalizedKey);
+      if (existing) {
+        existing.count += 1;
+        if (ts > existing.lastVisited) {
+          existing.lastVisited = ts;
+          if (title) existing.title = title;
+        }
+      } else {
+        groupedMap.set(normalizedKey, {
+          title,
+          target,
+          displayDomain: derivedDomain,
+          isUrl: isActualUrl,
+          count: 1,
+          lastVisited: ts,
+        });
+      }
+    });
+
+    // Also factor in recentSearches so recent queries are captured
+    (recentSearches || []).forEach(r => {
+      const q = (r || '').trim();
+      if (!q) return;
+      const key = q.toLowerCase();
+      const existing = groupedMap.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        groupedMap.set(key, {
+          title: q,
+          target: q,
+          displayDomain: 'Search Query',
+          isUrl: false,
+          count: 1,
+          lastVisited: Date.now(),
+        });
+      }
+    });
+
+    // Curated high-tech baseline defaults if history has fewer than 5 items
+    const baselineVisits: Array<{
+      title: string;
+      target: string;
+      displayDomain: string;
+      isUrl: boolean;
+      count: number;
+    }> = [
+      {
+        title: 'Antiqora Quantum Lab',
+        target: 'https://antiqora.io/quantum',
+        displayDomain: 'antiqora.io',
+        isUrl: true,
+        count: 14
+      },
+      {
+        title: 'ArXiv AI & Neural Papers',
+        target: 'https://arxiv.org/list/cs.AI/recent',
+        displayDomain: 'arxiv.org',
+        isUrl: true,
+        count: 11
+      },
+      {
+        title: 'GitHub Trending Repos',
+        target: 'https://github.com/trending',
+        displayDomain: 'github.com',
+        isUrl: true,
+        count: 9
+      },
+      {
+        title: 'Hacker News Tech Frontpage',
+        target: 'https://news.ycombinator.com',
+        displayDomain: 'ycombinator.com',
+        isUrl: true,
+        count: 7
+      },
+      {
+        title: 'TypeScript 7 Language Specs',
+        target: 'TypeScript 7 Language Specs',
+        displayDomain: 'Search Query',
+        isUrl: false,
+        count: 6
+      }
+    ];
+
+    if (groupedMap.size < 5) {
+      baselineVisits.forEach(seed => {
+        const key = seed.target.toLowerCase();
+        if (!groupedMap.has(key)) {
+          groupedMap.set(key, {
+            title: seed.title,
+            target: seed.target,
+            displayDomain: seed.displayDomain,
+            isUrl: seed.isUrl,
+            count: seed.count,
+            lastVisited: Date.now() - 3600000 * seed.count,
+          });
+        }
+      });
+    }
+
+    const formatTimeAgo = (ts: number): string => {
+      const diff = Date.now() - ts;
+      if (diff < 60000) return 'Just now';
+      if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+      if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+      return `${Math.floor(diff / 86400000)}d ago`;
+    };
+
+    return Array.from(groupedMap.entries())
+      .map(([id, data]) => ({
+        id,
+        title: data.title,
+        target: data.target,
+        displayDomain: data.displayDomain,
+        isUrl: data.isUrl,
+        count: data.count,
+        lastVisited: data.lastVisited,
+        formattedTime: formatTimeAgo(data.lastVisited),
+      }))
+      .sort((a, b) => b.count - a.count || b.lastVisited - a.lastVisited)
+      .slice(0, 5);
+  }, [historyItems, recentSearches, usageTick]);
 
   // Discover Categories Data
   const discoverCategories = [
@@ -174,20 +377,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
     }
   ];
 
-  const suggestionDatabase = [
-    "Quantum Computing Breakthroughs",
-    "Quantum Computing Algorithms",
-    "TypeScript 7 Release Notes",
-    "Neural Search Engine Architecture",
-    "Autonomous Energy Grids 2026",
-    "Next-Gen WebAssembly Runtimes",
-    "Electrical Vehicle Inverter Simulation",
-    "Solid State Battery Electrolytes",
-    "MATLAB Simulink Microgrid Control",
-    "Decentralized Information Retrieval",
-    "High-Performance Web Applications"
-  ];
-
   // Global Keyboard Shortcuts (Ctrl+K or / to focus search)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -197,50 +386,58 @@ export const HomeView: React.FC<HomeViewProps> = ({
       ) {
         e.preventDefault();
         searchInputRef.current?.focus();
+        setShowSuggestions(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Fetch or filter dynamic suggestions
+  // Click outside listener to dismiss suggestions
   useEffect(() => {
-    const trimmed = query.trim().toLowerCase();
-    if (trimmed.length > 0) {
-      // Local fallback + server autocomplete call
-      const matches = suggestionDatabase.filter(s => 
-        s.toLowerCase().includes(trimmed)
-      ).slice(0, 6);
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, []);
 
-      // Mix with matching recent searches
-      const recentMatches = recentSearches.filter(r =>
-        r.toLowerCase().includes(trimmed) && !matches.includes(r)
-      ).slice(0, 2);
+  // Debounced server autocomplete fetch on query change
+  useEffect(() => {
+    const trimmed = query.trim();
+    setSelectedIndex(-1);
 
-      setSuggestions([...recentMatches, ...matches]);
-      setShowSuggestions(true);
-      setSelectedIndex(-1);
+    if (!trimmed) {
+      setServerSuggestions([]);
+      return;
+    }
 
-      // Async fetch server suggestions
+    const timer = setTimeout(() => {
       fetch(`/api/autocomplete?q=${encodeURIComponent(trimmed)}`)
         .then(res => res.json())
         .then(data => {
-          if (data?.suggestions && Array.isArray(data.suggestions) && data.suggestions.length > 0) {
-            const combined = Array.from(new Set([...recentMatches, ...data.suggestions, ...matches])).slice(0, 7);
-            setSuggestions(combined);
+          if (data?.suggestions && Array.isArray(data.suggestions)) {
+            setServerSuggestions(data.suggestions);
           }
         })
         .catch(() => {});
-    } else {
-      setSuggestions([]);
-      setShowSuggestions(false);
-      setSelectedIndex(-1);
-    }
-  }, [query, recentSearches]);
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [query]);
 
   const handleSearchSubmit = (targetQuery: string, overrideTab?: string) => {
     const target = targetQuery.trim();
     if (!target) return;
+
+    // Record in internal usage counter
+    trendingSearchesService.recordQueryUsage(target);
 
     setIsSubmitting(true);
     setShowSuggestions(false);
@@ -252,21 +449,42 @@ export const HomeView: React.FC<HomeViewProps> = ({
     }, 200);
   };
 
+  const handleVisitedItemClick = (item: { target: string; isUrl: boolean }) => {
+    if (item.isUrl) {
+      onSearch(item.target, 'all');
+    } else {
+      setQuery(item.target);
+      handleSearchSubmit(item.target);
+    }
+  };
+
   const handleKeyDownInInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (suggestions.length > 0) {
+      if (!showSuggestions) {
+        setShowSuggestions(true);
+      } else if (suggestions.length > 0) {
         setSelectedIndex(prev => (prev < suggestions.length - 1 ? prev + 1 : 0));
       }
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (suggestions.length > 0) {
+      if (!showSuggestions) {
+        setShowSuggestions(true);
+      } else if (suggestions.length > 0) {
         setSelectedIndex(prev => (prev > 0 ? prev - 1 : suggestions.length - 1));
+      }
+    } else if (e.key === 'Tab') {
+      if (showSuggestions && suggestions.length > 0) {
+        e.preventDefault();
+        const target = selectedIndex >= 0 && selectedIndex < suggestions.length
+          ? suggestions[selectedIndex].text
+          : suggestions[0].text;
+        setQuery(target);
       }
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      if (selectedIndex >= 0 && selectedIndex < suggestions.length) {
-        const selected = suggestions[selectedIndex];
+      if (showSuggestions && selectedIndex >= 0 && selectedIndex < suggestions.length) {
+        const selected = suggestions[selectedIndex].text;
         setQuery(selected);
         handleSearchSubmit(selected);
       } else {
@@ -299,15 +517,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* Top Bar: Quick Theme, Mode & Settings */}
       <div className="w-full flex items-center justify-between gap-3 mb-6 sm:mb-8">
         
-        {/* Left Status Pill & PWA Install Button */}
+        {/* Left Status Pill */}
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-cyan-500/20 bg-cyan-500/5 dark:bg-slate-900/60 text-[11px] font-mono text-cyan-600 dark:text-cyan-400 backdrop-blur-md">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="hidden sm:inline font-semibold">ANTIQORA Okapi BM25 Engine</span>
-            <span className="sm:hidden font-semibold">ANTIQORA v2.6</span>
+            <span className="font-semibold">ANTIQORA Online</span>
           </div>
-
-          <PWAInstallButton variant="pill" />
         </div>
 
         {/* Right Action Controls */}
@@ -328,11 +543,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* Main Center Search Hero Section */}
       <div className="w-full max-w-3xl my-auto flex flex-col items-center text-center">
         
-        {/* ANTIQORA Logo with Hover Glow */}
+        {/* ANTIQORA Logo with Subtle Hover Glow & Tap Micro-interaction */}
         <motion.div 
-          whileHover={{ scale: 1.03 }}
-          transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-          className="mb-8 cursor-pointer select-none"
+          whileHover={{ scale: 1.015 }}
+          whileTap={{ scale: 0.98 }}
+          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+          className="mb-7 cursor-pointer select-none"
           onClick={() => {
             setQuery('');
             searchInputRef.current?.focus();
@@ -371,7 +587,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
 
         {/* Central Search Input Card */}
-        <div className="w-full relative group mb-6 text-left">
+        <div ref={searchContainerRef} className="w-full relative group mb-6 text-left">
           {/* Animated Glow Border Frame */}
           <div 
             className={`absolute -inset-1 rounded-3xl bg-gradient-to-r ${
@@ -398,11 +614,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
               id="antiqora-main-search"
               type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDownInInput}
-              onFocus={() => {
-                if (suggestions.length > 0) setShowSuggestions(true);
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setShowSuggestions(true);
               }}
+              onKeyDown={handleKeyDownInInput}
+              onFocus={() => setShowSuggestions(true)}
               placeholder={
                 isAiMode
                   ? "Ask ANTIQORA AI anything... (Neural Synthesis Mode)"
@@ -411,6 +628,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               className="w-full bg-transparent text-base sm:text-lg text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none"
               autoFocus
               aria-label="Search query"
+              autoComplete="off"
             />
 
             {/* Keyboard Shortcut Hint */}
@@ -424,8 +642,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <button
                 onClick={() => {
                   setQuery('');
-                  setSuggestions([]);
-                  setShowSuggestions(false);
+                  setServerSuggestions([]);
+                  setShowSuggestions(true);
                   searchInputRef.current?.focus();
                 }}
                 className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition mr-1"
@@ -447,20 +665,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   title="Analyze Visual / Camera Input"
                   aria-label="Visual Search"
                 >
-                  <Camera className="w-5 h-5" />
-                </button>
-              )}
-
-              {/* Document Search Modal Button */}
-              {onOpenDocument && (
-                <button
-                  type="button"
-                  onClick={onOpenDocument}
-                  className="p-2 sm:p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                  title="Document & Paper Intelligence"
-                  aria-label="Document Intelligence"
-                >
-                  <FileText className="w-5 h-5" />
+                  <ScanQrCode className="w-5 h-5" />
                 </button>
               )}
 
@@ -474,139 +679,60 @@ export const HomeView: React.FC<HomeViewProps> = ({
               >
                 <Mic className="w-5 h-5" />
               </button>
-
-              {/* Execute Search Action Button */}
-              <button
-                type="button"
-                onClick={() => handleSearchSubmit(query)}
-                className={`rounded-xl px-4 sm:px-6 py-2.5 sm:py-3 text-sm font-semibold text-slate-950 transition flex items-center gap-1.5 active:scale-95 ${
-                  isAiMode
-                    ? 'bg-gradient-to-r from-purple-400 via-indigo-400 to-cyan-400 shadow-md shadow-purple-500/20 hover:brightness-110'
-                    : 'bg-gradient-to-r from-cyan-500 to-indigo-600 shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-indigo-500'
-                }`}
-                aria-label="Execute search"
-              >
-                <span>{isAiMode ? 'Ask AI' : 'Search'}</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
             </div>
           </div>
 
-          {/* 3D Knowledge Dimensions Bar */}
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1 text-xs">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-slate-400 font-medium mr-1 text-[11px] uppercase tracking-wider">3D Dimension:</span>
-              <button
-                type="button"
-                onClick={() => handleSearchSubmit(query || 'Quantum Computing', 'timeline')}
-                className="flex items-center gap-1 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1 text-slate-700 dark:text-slate-300 hover:border-amber-500/60 hover:text-amber-500 transition"
-              >
-                <Clock className="w-3 h-3 text-amber-500" />
-                <span>Past (Timeline)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSearchSubmit(query || 'Quantum Computing', 'all')}
-                className="flex items-center gap-1 rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-2.5 py-1 text-slate-700 dark:text-slate-300 hover:border-cyan-500/60 hover:text-cyan-500 transition"
-              >
-                <Activity className="w-3 h-3 text-cyan-500" />
-                <span>Present (Live)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSearchSubmit(query || 'Quantum Computing', 'future')}
-                className="flex items-center gap-1 rounded-lg border border-indigo-500/30 bg-indigo-500/5 px-2.5 py-1 text-slate-700 dark:text-slate-300 hover:border-indigo-500/60 hover:text-indigo-400 transition"
-              >
-                <Compass className="w-3 h-3 text-indigo-400" />
-                <span>Future (Scenarios)</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSearchSubmit(query || 'Quantum Computing', 'research')}
-                className="flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-900/50 px-2.5 py-1 text-slate-600 dark:text-slate-400 hover:text-cyan-500 transition"
-              >
-                <BookOpen className="w-3 h-3 text-purple-400" />
-                <span>Research</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSearchSubmit(query || 'Quantum Computing', 'compare')}
-                className="flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-900/50 px-2.5 py-1 text-slate-600 dark:text-slate-400 hover:text-cyan-500 transition"
-              >
-                <GitCompare className="w-3 h-3 text-emerald-400" />
-                <span>Compare</span>
-              </button>
-            </div>
+          {/* Real-time Search Suggestions Dropdown */}
+          <SearchSuggestionsDropdown
+            isOpen={showSuggestions}
+            query={query}
+            suggestions={suggestions}
+            selectedIndex={selectedIndex}
+            onSelectSuggestion={(selectedText) => {
+              setQuery(selectedText);
+              handleSearchSubmit(selectedText);
+            }}
+            onFillQuery={(fillText) => {
+              setQuery(fillText);
+              searchInputRef.current?.focus();
+            }}
+            onDeleteRecent={onDeleteRecent}
+            onClearRecent={onClearRecent}
+            onHoverIndex={(idx) => setSelectedIndex(idx)}
+            hasRecentSearches={recentSearches.length > 0}
+          />
+        </div>
 
-            {/* Depth Selector */}
-            {onSetDepth && (
-              <div className="flex items-center rounded-lg bg-slate-100 dark:bg-slate-900/70 p-0.5 border border-slate-200 dark:border-slate-800 text-[11px]">
-                {(['simple', 'standard', 'detailed', 'expert'] as AnswerDepth[]).map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => onSetDepth(d)}
-                    className={`capitalize px-2 py-0.5 rounded-md transition ${
-                      depth === d
-                        ? 'bg-cyan-500 text-slate-950 font-bold shadow-xs'
-                        : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    {d}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Dynamic Smart Autocomplete Dropdown */}
-          <AnimatePresence>
-            {showSuggestions && suggestions.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.15 }}
-                className="absolute top-full left-0 right-0 mt-2 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl shadow-2xl overflow-hidden z-30 text-left"
-              >
-                <div className="px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                  <span>Smart Query Suggestions</span>
-                  <span className="font-mono text-[9px] text-cyan-500">BM25 Predictive</span>
-                </div>
-                {suggestions.map((s, idx) => {
-                  const isRecent = recentSearches.includes(s);
-                  const isSelected = idx === selectedIndex;
-                  return (
-                    <div
-                      key={idx}
-                      onClick={() => {
-                        setQuery(s);
-                        handleSearchSubmit(s);
-                      }}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                      className={`flex items-center justify-between px-4 py-3 cursor-pointer text-sm border-b border-slate-100 dark:border-slate-800/50 last:border-b-0 transition ${
-                        isSelected
-                          ? 'bg-cyan-500/10 dark:bg-cyan-500/15 text-cyan-600 dark:text-cyan-300 font-semibold'
-                          : 'text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/80'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        {isRecent ? (
-                          <Clock className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                        ) : (
-                          <Search className="w-4 h-4 text-cyan-600 dark:text-cyan-400 flex-shrink-0" />
-                        )}
-                        <span>{s}</span>
-                      </div>
-                      {isRecent && (
-                        <span className="text-[10px] text-slate-400 font-mono">Recent</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </motion.div>
-            )}
-          </AnimatePresence>
+        {/* Quick App & Platform Search Chips */}
+        <div className="mt-3.5 mb-1.5 flex flex-wrap items-center justify-center gap-1.5 text-xs">
+          <span className="text-slate-500 dark:text-slate-400 text-[11px] font-semibold flex items-center gap-1 mr-1">
+            <Smartphone className="w-3.5 h-3.5 text-indigo-500" />
+            <span>Universal App Search:</span>
+          </span>
+          {[
+            { label: 'PhonePe UPI', q: 'phonepe' },
+            { label: 'Google Pay', q: 'google pay' },
+            { label: 'Zomato Food', q: 'zomato' },
+            { label: 'Swiggy', q: 'swiggy' },
+            { label: 'Blinkit Grocery', q: 'blinkit' },
+            { label: 'Canva Designer', q: 'canva' },
+            { label: 'ChatGPT AI', q: 'chatgpt' },
+            { label: 'DigiLocker', q: 'digilocker' },
+            { label: 'IRCTC Train', q: 'irctc' },
+            { label: 'Spotify', q: 'spotify' }
+          ].map((chip, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => {
+                setQuery(chip.q);
+                onSearch(chip.q, 'apps');
+              }}
+              className="px-2.5 py-1 rounded-lg bg-white/80 dark:bg-slate-800/80 hover:bg-indigo-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition text-[11px] font-medium flex items-center gap-1 border border-slate-200/80 dark:border-slate-700/80 hover:border-indigo-400 dark:hover:border-indigo-500 shadow-2xs"
+            >
+              <span>{chip.label}</span>
+            </button>
+          ))}
         </div>
 
         {/* Selected Image Preview Pill */}
@@ -627,6 +753,113 @@ export const HomeView: React.FC<HomeViewProps> = ({
         )}
 
       </div>
+
+      {/* RECENTLY VISITED SECTION (Top 5 Most Frequently Accessed URLs or Search Queries) */}
+      {recentlyVisitedItems.length > 0 && (
+        <div className="w-full max-w-4xl mt-3 mb-8 text-left">
+          <div className="flex items-center justify-between px-1 mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-lg bg-cyan-500/10 dark:bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-500 dark:text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.2)]">
+                <History className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />
+              </div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-slate-800 dark:text-slate-200">
+                  Recently Visited
+                </h3>
+                <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-semibold bg-cyan-500/10 text-cyan-600 dark:text-cyan-300 border border-cyan-500/25">
+                  <Activity className="w-2.5 h-2.5 text-cyan-400" />
+                  <span>Top 5 Frequency</span>
+                </span>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
+              From Browsing History
+            </span>
+          </div>
+
+          {/* 5 Clickable Cards Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            {recentlyVisitedItems.map((item, idx) => (
+              <motion.div
+                key={item.id || idx}
+                whileHover={{ y: -3, scale: 1.015 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => handleVisitedItemClick(item)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleVisitedItemClick(item);
+                  }
+                }}
+                className="group relative flex flex-col justify-between p-3.5 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 hover:border-cyan-400/60 dark:hover:border-cyan-500/60 transition-all duration-200 shadow-xs hover:shadow-[0_0_20px_rgba(6,182,212,0.18)] cursor-pointer text-left overflow-hidden outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-400"
+                aria-label={`Recently visited #${idx + 1}: ${item.title}`}
+              >
+                {/* Subtle futuristic gradient backdrop on hover */}
+                <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 via-indigo-500/5 to-transparent dark:from-cyan-950/20 dark:via-indigo-950/20 dark:to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+
+                <div>
+                  {/* Top Row: Favicon/Icon + Frequency Pill */}
+                  <div className="flex items-center justify-between gap-2 mb-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-center overflow-hidden shrink-0 shadow-2xs group-hover:border-cyan-500/40 transition-colors">
+                      {item.isUrl ? (
+                        <img
+                          src={`https://www.google.com/s2/favicons?domain=${item.displayDomain}&sz=64`}
+                          alt={item.displayDomain}
+                          className="w-4 h-4 object-contain"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <Search className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />
+                      )}
+                    </div>
+
+                    <span className="inline-flex items-center gap-1 font-mono text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/25 shadow-[0_0_8px_rgba(6,182,212,0.1)]">
+                      <Flame className="w-2.5 h-2.5 text-cyan-500 fill-cyan-500/20" />
+                      <span>{item.count} {item.count === 1 ? 'visit' : 'visits'}</span>
+                    </span>
+                  </div>
+
+                  {/* Card Title */}
+                  <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate group-hover:text-cyan-500 dark:group-hover:text-cyan-300 transition-colors">
+                    {item.title}
+                  </h4>
+
+                  {/* Subtitle / Domain */}
+                  <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate flex items-center gap-1 mt-0.5">
+                    {item.isUrl ? (
+                      <>
+                        <Globe className="w-2.5 h-2.5 shrink-0 text-cyan-500/70" />
+                        <span className="truncate">{item.displayDomain}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Search className="w-2.5 h-2.5 shrink-0 text-slate-400" />
+                        <span className="truncate">Search Query</span>
+                      </>
+                    )}
+                  </p>
+                </div>
+
+                {/* Bottom Row: Last Visited Time + Launch Arrow */}
+                <div className="flex items-center justify-between pt-2.5 border-t border-slate-100 dark:border-slate-800/80 mt-3 text-[10px] font-mono text-slate-400 dark:text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5 text-slate-400" />
+                    <span>{item.formattedTime}</span>
+                  </span>
+                  <div className="flex items-center gap-1 text-slate-400 group-hover:text-cyan-400 transition-colors">
+                    <span className="text-[9px] font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Launch</span>
+                    <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* DISCOVER HUB SECTION */}
       <div className="w-full max-w-4xl mt-6 mb-10 text-left">
@@ -756,7 +989,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
         <div className="flex items-center gap-1.5">
           <Globe2 className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
-          <span>Okapi BM25 + Google Search Proxy</span>
+          <span>Real-Time Web Search Proxy</span>
         </div>
         <div className="flex items-center gap-1.5">
           <Sparkles className="w-4 h-4 text-purple-500 dark:text-purple-400" />

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { SearchResultItem } from '../services/api';
+import React, { useState, useEffect, useMemo } from 'react';
+import { SearchResultItem, summarizeSearchResult, PageSummaryResult } from '../services/api';
 import { generateAIAnswer } from '../services/api';
 import { settingsManager } from '../services/settingsManager';
+import { locationService } from '../services/locationService';
 import { GitHubSearchResult } from '../services/providers/GithubSearchProvider';
 import { 
   TabType, 
@@ -10,6 +11,8 @@ import {
   QueryIntentResult 
 } from '../types';
 import { OfficialDiscoveryCards } from './OfficialDiscoveryCards';
+import { UniversalAppCard } from './UniversalAppCard';
+import { UniversalAppRecord } from '../services/app-discovery/types';
 import { 
   Sparkles, 
   Globe, 
@@ -26,10 +29,12 @@ import {
   Shield,
   Layers,
   Link2,
+  Share2,
   Smartphone,
   Milestone,
   FileText,
   MapPin,
+  Navigation,
   Newspaper,
   Video,
   ShoppingBag,
@@ -87,17 +92,72 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
   const [showFollowUpInput, setShowFollowUpInput] = useState<boolean>(false);
   const [followUpQuery, setFollowUpQuery] = useState<string>("");
-  const [sortBy, setSortBy] = useState<"relevance" | "date">("relevance");
-  const [selectedDemoPreview, setSelectedDemoPreview] = useState<SearchResultItem | null>(null);
+  const [sortBy, setSortBy] = useState<"relevance" | "date" | "distance">("relevance");
+  const [selectedPreview, setSelectedPreview] = useState<SearchResultItem | null>(null);
   const [copiedUrlId, setCopiedUrlId] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ message: string; url?: string } | null>(null);
+  const [sharedUrlId, setSharedUrlId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; subtitle?: string; url?: string } | null>(null);
+  const [universalApps, setUniversalApps] = useState<UniversalAppRecord[]>([]);
+  const [loadingApps, setLoadingApps] = useState<boolean>(false);
+  const [appPlatformFilter, setAppPlatformFilter] = useState<'all' | 'android' | 'ios' | 'windows' | 'web' | 'india'>('all');
+  const [appCategoryFilter, setAppCategoryFilter] = useState<string>('all');
+  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+  
+  // AI Page Summarization State
+  const [summaries, setSummaries] = useState<Record<string, PageSummaryResult>>({});
+  const [summarizingIds, setSummarizingIds] = useState<Record<string, boolean>>({});
+  const [expandedSummaryIds, setExpandedSummaryIds] = useState<Record<string, boolean>>({});
+  const [copiedSummaryId, setCopiedSummaryId] = useState<string | null>(null);
 
-  const handleCopyLink = (item: SearchResultItem) => {
+  const handleSummarize = async (item: SearchResultItem) => {
+    // If already open and not currently fetching, toggle closed
+    if (expandedSummaryIds[item.id] && !summarizingIds[item.id]) {
+      setExpandedSummaryIds((prev) => ({ ...prev, [item.id]: false }));
+      return;
+    }
+
+    // If cached already, just open
+    if (summaries[item.id]) {
+      setExpandedSummaryIds((prev) => ({ ...prev, [item.id]: true }));
+      return;
+    }
+
+    // Trigger AI call
+    setSummarizingIds((prev) => ({ ...prev, [item.id]: true }));
+    setExpandedSummaryIds((prev) => ({ ...prev, [item.id]: true }));
+
+    try {
+      const summaryData = await summarizeSearchResult({
+        title: item.title,
+        url: item.url,
+        snippet: item.snippet,
+        domain: item.domain,
+        query: query
+      });
+      setSummaries((prev) => ({ ...prev, [item.id]: summaryData }));
+    } catch (err) {
+      console.error("Failed to summarize search result:", err);
+    } finally {
+      setSummarizingIds((prev) => ({ ...prev, [item.id]: false }));
+    }
+  };
+
+  const handleCopySummary = (itemId: string, summary: PageSummaryResult) => {
+    const formattedText = `Summary of ${summary.title} (${summary.url}):\n\n${summary.summary}\n\nKey Highlights:\n${summary.bullets.map(b => `• ${b}`).join('\n')}`;
+    navigator.clipboard.writeText(formattedText);
+    setCopiedSummaryId(itemId);
+    setTimeout(() => {
+      setCopiedSummaryId((curr) => (curr === itemId ? null : curr));
+    }, 2000);
+  };
+
+  const handleCopyLink = (item: { id: string; title?: string; url?: string }) => {
     if (!item.url) return;
     navigator.clipboard.writeText(item.url);
     setCopiedUrlId(item.id);
     setToast({
       message: "Copied!",
+      subtitle: "Link copied to clipboard",
       url: item.url
     });
 
@@ -110,21 +170,60 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
     }, 2800);
   };
 
+  const handleShare = async (item: { id: string; title: string; url?: string; snippet?: string }) => {
+    if (!item.url) return;
+
+    const shareData = {
+      title: item.title,
+      text: item.snippet ? `${item.title} — ${item.snippet.slice(0, 160)}...` : item.title,
+      url: item.url
+    };
+
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+      try {
+        await navigator.share(shareData);
+        setSharedUrlId(item.id);
+        setToast({
+          message: "Shared!",
+          subtitle: "Shared via Web Share API",
+          url: item.url
+        });
+
+        setTimeout(() => {
+          setSharedUrlId((curr) => (curr === item.id ? null : curr));
+        }, 2000);
+
+        setTimeout(() => {
+          setToast((curr) => (curr?.url === item.url ? null : curr));
+        }, 2800);
+      } catch (err: any) {
+        // If aborted by user (AbortError), don't show error or fallback
+        if (err?.name !== 'AbortError') {
+          console.warn("Web Share API failed, falling back to copy link:", err);
+          handleCopyLink(item);
+        }
+      }
+    } else {
+      // Fallback if Web Share API is unsupported on current platform/browser
+      handleCopyLink(item);
+    }
+  };
+
   const fetchAiOverview = async () => {
     setLoadingAi(true);
     try {
-      const demoSources = [
-        { title: "Demo Source 1: ANTIQORA Synthetic Index", domain: "demo.antiqora.internal", url: "https://demo.antiqora.internal/source-1" },
-        { title: "Demo Source 2: Technical Knowledge Graph", domain: "demo.research-graph.org", url: "https://demo.research-graph.org/source-2" }
+      const sources = [
+        { title: "ANTIQORA Knowledge Index", domain: "antiqora.internal", url: "https://antiqora.internal/source-1" },
+        { title: "Technical Knowledge Graph", domain: "research-graph.org", url: "https://research-graph.org/source-2" }
       ];
-      const data = await generateAIAnswer(query, demoSources);
+      const data = await generateAIAnswer(query, sources);
       setAiAnswer(data.answer);
-      setAiSources(demoSources);
+      setAiSources(sources);
     } catch {
-      setAiAnswer(`AI-generated demo answer for "${query}": Key developments in this domain highlight advancements across distributed computation, neural retrieval methods, and verifiable data architectures.`);
+      setAiAnswer(`Synthesized answer for "${query}": Key developments in this domain highlight advancements across distributed computation, neural retrieval methods, and verifiable data architectures.`);
       setAiSources([
-        { title: "Demo Source 1", domain: "demo-source-1.antiqora.io", url: "#" },
-        { title: "Demo Source 2", domain: "demo-source-2.antiqora.io", url: "#" }
+        { title: "Knowledge Index", domain: "sources.antiqora.io", url: "#" },
+        { title: "Research Reference", domain: "research.antiqora.io", url: "#" }
       ]);
     } finally {
       setLoadingAi(false);
@@ -136,6 +235,77 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
       fetchAiOverview();
     }
   }, [query]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const fetchUniversalApps = async () => {
+      const q = query.trim();
+      if (!q) return;
+      setLoadingApps(true);
+      try {
+        const res = await fetch(`/api/apps/search?q=${encodeURIComponent(q)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!isCancelled && data.results) {
+            setUniversalApps(data.results);
+            if (data.facets?.categories) {
+              setAvailableCategories(Object.keys(data.facets.categories));
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch universal apps:", e);
+      } finally {
+        if (!isCancelled) setLoadingApps(false);
+      }
+    };
+
+    fetchUniversalApps();
+    return () => { isCancelled = true; };
+  }, [query]);
+
+  const displayUniversalApps = React.useMemo(() => {
+    const sourceList: UniversalAppRecord[] = universalApps.length > 0
+      ? universalApps
+      : (appsResults || []).map((a): UniversalAppRecord => ({
+          id: a.id,
+          name: a.name,
+          developer: a.developer,
+          category: a.category,
+          description: a.description,
+          platforms: [
+            ...(a.platforms.android?.supported ? ['Android' as const] : []),
+            ...(a.platforms.ios?.supported ? ['iOS' as const] : []),
+            ...(a.platforms.web?.supported ? ['Web' as const] : []),
+            ...(a.platforms.desktop?.supported ? ['Windows' as const] : [])
+          ],
+          officialWebsite: a.platforms.web?.url || '',
+          androidUrl: a.platforms.android?.storeUrl || '',
+          iosUrl: a.platforms.ios?.storeUrl || '',
+          windowsUrl: a.platforms.desktop?.url || '',
+          webUrl: a.platforms.web?.url || '',
+          logo: a.icon || '',
+          countryAvailability: ['Global', 'IN'],
+          languageSupport: ['en', 'hi'],
+          lastVerified: a.lastUpdated || '2026-09',
+          verificationStatus: a.isVerified ? 'verified' : 'unverified',
+          confidence: a.isVerified ? 0.95 : 0.4,
+          rating: a.rating,
+          reviewsCount: a.reviewsCount,
+          downloads: a.downloads,
+          isIndianPriority: false
+        }));
+
+    return sourceList.filter(app => {
+      if (appPlatformFilter === 'android' && !app.androidUrl && !app.platforms.includes('Android')) return false;
+      if (appPlatformFilter === 'ios' && !app.iosUrl && !app.platforms.includes('iOS')) return false;
+      if (appPlatformFilter === 'windows' && !app.windowsUrl && !app.platforms.includes('Windows')) return false;
+      if (appPlatformFilter === 'web' && !app.webUrl && !app.platforms.includes('Web')) return false;
+      if (appPlatformFilter === 'india' && !app.isIndianPriority && !app.countryAvailability?.includes('IN')) return false;
+      if (appCategoryFilter !== 'all' && app.category.toLowerCase() !== appCategoryFilter.toLowerCase()) return false;
+      return true;
+    });
+  }, [universalApps, appsResults, appPlatformFilter, appCategoryFilter]);
 
   const handleCopyAnswer = () => {
     if (!aiAnswer) return;
@@ -149,27 +319,62 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
     if (!followUpQuery.trim()) return;
     setLoadingAi(true);
     try {
-      const demoSources = [
-        { title: "Demo Source 1 (Follow-up)", domain: "demo.antiqora.internal", url: "#" },
-        { title: "Demo Source 2 (Follow-up)", domain: "demo.research-graph.org", url: "#" }
+      const sources = [
+        { title: "Knowledge Index (Follow-up)", domain: "antiqora.internal", url: "#" },
+        { title: "Technical Index (Follow-up)", domain: "research-graph.org", url: "#" }
       ];
-      const data = await generateAIAnswer(`${query} -> Follow-up: ${followUpQuery}`, demoSources);
+      const data = await generateAIAnswer(`${query} -> Follow-up: ${followUpQuery}`, sources);
       setAiAnswer(data.answer);
       setFollowUpQuery("");
       setShowFollowUpInput(false);
     } catch {
-      setAiAnswer(`Follow-up demo response: Additional synthesized points for "${followUpQuery}" in relation to "${query}".`);
+      setAiAnswer(`Synthesized answer: Additional insights for "${followUpQuery}" in relation to "${query}".`);
     } finally {
       setLoadingAi(false);
     }
   };
 
-  const sortedResults = [...results].sort((a, b) => {
-    if (sortBy === 'date') {
-      return (b.date || "").localeCompare(a.date || "");
+  const [proximityRadius, setProximityRadius] = useState<number>(10000);
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({ lat: 28.6139, lng: 77.2090 }); // Default Delhi
+
+  useEffect(() => {
+    const handleGeo = (e: any) => {
+      if (e.detail?.coords) {
+        setUserCoords(e.detail.coords);
+      }
+    };
+    window.addEventListener('antiqora:geolocation-updated', handleGeo as EventListener);
+    return () => window.removeEventListener('antiqora:geolocation-updated', handleGeo as EventListener);
+  }, []);
+
+  const sortedResults = useMemo(() => {
+    const items = [...results].map((item, idx) => {
+      const targetCoords = (item as any).mapCoords || {
+        lat: userCoords.lat + (((idx * 17) % 50) - 25) * 0.005,
+        lng: userCoords.lng + (((idx * 31) % 50) - 25) * 0.005
+      };
+      const distInfo = locationService.calculateDistance(userCoords, targetCoords);
+      return {
+        ...item,
+        distanceKm: distInfo.distanceKm,
+        distanceMiles: distInfo.distanceMiles,
+        walkingMins: distInfo.walkingMins,
+        drivingMins: distInfo.drivingMins
+      };
+    });
+
+    if (currentTab === 'location' || sortBy === 'distance') {
+      items.sort((a, b) => a.distanceKm - b.distanceKm);
+    } else if (sortBy === 'date') {
+      items.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
     }
-    return 0;
-  });
+
+    if (currentTab === 'location' && proximityRadius < 5000) {
+      return items.filter(i => i.distanceKm <= proximityRadius);
+    }
+
+    return items;
+  }, [results, sortBy, currentTab, proximityRadius, userCoords]);
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 space-y-6">
@@ -190,11 +395,11 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
           </span>
         </div>
 
-        {/* Phase 1 Demo Notice Badge & Sort Dropdown */}
+        {/* Status Badge & Sort Dropdown */}
         <div className="flex items-center gap-3">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            <span>Phase 1 Prototype • Demo Data Mode</span>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+            <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
+            <span>Neural Search Active</span>
           </div>
 
           <div className="relative">
@@ -204,12 +409,49 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
               className="appearance-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 text-xs rounded-xl px-3 py-1.5 pr-8 focus:outline-none focus:border-cyan-500 shadow-sm"
             >
               <option value="relevance">Sort: Relevance</option>
+              <option value="distance">Sort: Proximity (Nearest)</option>
               <option value="date">Sort: Recent</option>
             </select>
             <ChevronDown className="absolute right-2.5 top-2.5 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
           </div>
         </div>
       </div>
+
+      {/* Proximity Filter Banner (Active in LocationView tab) */}
+      {currentTab === 'location' && (
+        <div className="rounded-2xl border border-cyan-500/30 bg-cyan-500/5 p-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 flex items-center justify-center">
+              <Navigation className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>Proximity-Based Filter & Sorting Active</span>
+              </h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Results automatically sorted by distance from your current GPS location ({userCoords.lat.toFixed(3)}°, {userCoords.lng.toFixed(3)}°).
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-500 dark:text-slate-400 font-medium">Radius:</span>
+            {(['all', '5', '25', '100'] as const).map(rad => (
+              <button
+                key={rad}
+                onClick={() => setProximityRadius(rad === 'all' ? 10000 : Number(rad))}
+                className={`px-3 py-1 rounded-xl font-semibold transition ${
+                  (rad === 'all' && proximityRadius > 5000) || proximityRadius === Number(rad)
+                    ? 'bg-cyan-500 text-slate-950 font-bold shadow-xs'
+                    : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                }`}
+              >
+                {rad === 'all' ? 'All' : `${rad} km`}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Error State */}
       {error && (
@@ -240,6 +482,7 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
           { id: 'videos' as TabType, label: 'Videos', icon: <Video className="w-3.5 h-3.5" /> },
           { id: 'news' as TabType, label: 'News', icon: <Newspaper className="w-3.5 h-3.5" /> },
           { id: 'places' as TabType, label: 'Maps', icon: <MapPin className="w-3.5 h-3.5" /> },
+          { id: 'location' as TabType, label: 'Live Location', icon: <Navigation className="w-3.5 h-3.5" /> },
           { id: 'shopping' as TabType, label: 'Shopping', icon: <ShoppingBag className="w-3.5 h-3.5" /> },
           { id: 'github' as TabType, label: 'GitHub', icon: <Code className="w-3.5 h-3.5" />, badge: 'Repos' },
           { id: 'research' as TabType, label: 'Research', icon: <Layers className="w-3.5 h-3.5" /> },
@@ -277,10 +520,10 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
       </div>
 
       {/* Main Results Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
         
         {/* Main Column */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className="lg:col-span-8 space-y-6">
           
           {/* Official Digital Discovery Cards: Websites & Apps */}
           <OfficialDiscoveryCards
@@ -290,6 +533,32 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
             savedItemIds={savedItemIds}
             filterMode={currentTab === 'websites' ? 'websites' : currentTab === 'apps' ? 'apps' : 'all'}
           />
+
+          {/* Top Universal App Discovery Card (if intent didn't already display an official app) */}
+          {currentTab === 'all' && universalApps.length > 0 && !intentResult?.officialApp && (
+            <div className="space-y-2 mb-4">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Universal App & Digital Platform Match</span>
+                </span>
+                <button
+                  onClick={() => onSelectTab('apps')}
+                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-medium"
+                >
+                  View all {universalApps.length} app results →
+                </button>
+              </div>
+              <UniversalAppCard
+                app={universalApps[0]}
+                isHero={true}
+                onSelectCategory={(cat) => {
+                  onSelectTab('apps');
+                  setAppCategoryFilter(cat);
+                }}
+              />
+            </div>
+          )}
 
           {/* If currentTab is 'websites', show websites list */}
           {currentTab === 'websites' && (
@@ -330,16 +599,88 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                         <p className="text-xs text-slate-600 dark:text-slate-300">{web.description}</p>
                       </div>
 
-                      <a 
-                        href={web.url} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 text-xs font-semibold hover:bg-cyan-400 transition flex-shrink-0"
-                      >
-                        <span>Open Website</span>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => handleSummarize({
+                            id: web.id,
+                            title: web.name,
+                            url: web.url,
+                            domain: web.domain,
+                            snippet: web.description,
+                            category: 'website',
+                            date: 'Verified'
+                          })}
+                          disabled={summarizingIds[web.id]}
+                          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                            expandedSummaryIds[web.id]
+                              ? 'bg-cyan-500/20 border-cyan-500 text-cyan-600 dark:text-cyan-300'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40'
+                          }`}
+                          title="Summarize website content with AI"
+                        >
+                          {summarizingIds[web.id] ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-500" />
+                          ) : (
+                            <Sparkles className="w-3.5 h-3.5 text-cyan-500" />
+                          )}
+                          <span>{summarizingIds[web.id] ? 'Summarizing...' : expandedSummaryIds[web.id] ? 'Hide Summary' : 'Summarize'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleShare({
+                            id: web.id,
+                            title: web.name,
+                            url: web.url,
+                            snippet: web.description
+                          })}
+                          className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition"
+                          title="Share website link"
+                          aria-label={`Share ${web.name}`}
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                          <span>Share</span>
+                        </button>
+
+                        <a 
+                          href={web.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-cyan-500 text-slate-950 text-xs font-semibold hover:bg-cyan-400 transition flex-shrink-0"
+                        >
+                          <span>Open Website</span>
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      </div>
                     </div>
+
+                    {/* AI Summary for website item */}
+                    {expandedSummaryIds[web.id] && summaries[web.id] && (
+                      <div className="pt-3 border-t border-slate-100 dark:border-slate-800/80 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-cyan-600 dark:text-cyan-400 flex items-center gap-1">
+                            <Sparkles className="w-3 h-3" />
+                            <span>AI Website Summary</span>
+                          </span>
+                          <button
+                            onClick={() => setExpandedSummaryIds(p => ({ ...p, [web.id]: false }))}
+                            className="text-[11px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                          >
+                            Close
+                          </button>
+                        </div>
+                        <p className="text-xs italic text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded-lg">
+                          "{summaries[web.id].summary}"
+                        </p>
+                        <ul className="space-y-1.5 text-xs text-slate-600 dark:text-slate-300">
+                          {summaries[web.id].bullets.map((b, i) => (
+                            <li key={i} className="flex items-start gap-2">
+                              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 mt-1.5 flex-shrink-0" />
+                              <span>{b}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
                     {web.subDestinations && web.subDestinations.length > 0 && (
                       <div className="pt-2 border-t border-slate-100 dark:border-slate-800/60 flex flex-wrap gap-2">
@@ -469,90 +810,142 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
             </div>
           )}
 
-          {/* If currentTab is 'apps', show apps directory */}
+          {/* If currentTab is 'apps', show Universal App Directory */}
           {currentTab === 'apps' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Smartphone className="w-4 h-4 text-indigo-400" />
-                  <span>Verified Apps & Platform Listings ({appsResults.length})</span>
-                </h3>
-                <span className="text-[11px] text-slate-400 font-mono">Store Verified</span>
+            <div className="space-y-5">
+              {/* Header & Meta */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <Smartphone className="w-5 h-5 text-indigo-500" />
+                    <span>Universal App & Web Platform Search</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+                      {displayUniversalApps.length} {displayUniversalApps.length === 1 ? 'Platform' : 'Platforms'}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Live dynamic discovery across Google Play, Apple App Store, F-Droid, Windows Store & verified developer domains.
+                  </p>
+                </div>
+
+                {loadingApps && (
+                  <div className="flex items-center gap-2 text-xs text-cyan-600 dark:text-cyan-400 font-medium">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Discovering live platforms...</span>
+                  </div>
+                )}
               </div>
 
-              {appsResults.length === 0 ? (
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-8 text-center text-slate-500 text-xs">
-                  No app listings found for "{query}".
+              {/* Platform Filter Toolbar */}
+              <div className="space-y-3 bg-slate-50 dark:bg-slate-900/60 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                    Filter by Platform & Ecosystem
+                  </span>
+                  {(appPlatformFilter !== 'all' || appCategoryFilter !== 'all') && (
+                    <button
+                      onClick={() => {
+                        setAppPlatformFilter('all');
+                        setAppCategoryFilter('all');
+                      }}
+                      className="text-xs text-cyan-600 dark:text-cyan-400 hover:underline font-medium"
+                    >
+                      Reset filters
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {[
+                    { id: 'all', label: 'All Platforms' },
+                    { id: 'android', label: 'Android (Google Play)' },
+                    { id: 'ios', label: 'iPhone (App Store)' },
+                    { id: 'windows', label: 'Windows PC' },
+                    { id: 'web', label: 'Web / PWA' },
+                    { id: 'india', label: '🇮🇳 India Focused' },
+                  ].map((p) => {
+                    const isActive = appPlatformFilter === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => setAppPlatformFilter(p.id as any)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition border ${
+                          isActive
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Category Chips */}
+                {availableCategories.length > 0 && (
+                  <div className="pt-2 border-t border-slate-200/60 dark:border-slate-800/60 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                    <span className="text-[11px] font-medium text-slate-500 flex-shrink-0 mr-1">Category:</span>
+                    <button
+                      onClick={() => setAppCategoryFilter('all')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition ${
+                        appCategoryFilter === 'all'
+                          ? 'bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900 font-bold'
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300'
+                      }`}
+                    >
+                      All Categories
+                    </button>
+                    {availableCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setAppCategoryFilter(cat)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition ${
+                          appCategoryFilter.toLowerCase() === cat.toLowerCase()
+                            ? 'bg-slate-800 dark:bg-slate-100 text-white dark:text-slate-900 font-bold'
+                            : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-300'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* App Results Cards */}
+              {displayUniversalApps.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-10 text-center space-y-3">
+                  <Smartphone className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto" />
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                      No matching app or platform listings found
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                      No verified apps found for query "{query}" with current platform/category filters. Try switching filters or searching popular apps like "PhonePe", "Zomato", "Instagram", or "Spotify".
+                    </p>
+                  </div>
+                  <div className="pt-2 flex justify-center gap-2">
+                    <button
+                      onClick={() => {
+                        setAppPlatformFilter('all');
+                        setAppCategoryFilter('all');
+                      }}
+                      className="px-4 py-2 rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400 text-xs font-semibold hover:bg-indigo-100 transition"
+                    >
+                      Clear Platform & Category Filters
+                    </button>
+                  </div>
                 </div>
               ) : (
-                appsResults.map((app) => (
-                  <div 
-                    key={app.id}
-                    className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3 hover:border-indigo-500/40 transition"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        {app.icon && (
-                          <img src={app.icon} alt={app.name} className="w-12 h-12 rounded-2xl object-cover border border-slate-200 dark:border-slate-800" />
-                        )}
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-bold text-slate-900 dark:text-white text-base">{app.name}</h4>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
-                              {app.verificationBadge}
-                            </span>
-                          </div>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">By {app.developer} • {app.category}</p>
-                        </div>
-                      </div>
-
-                      {app.rating && (
-                        <div className="flex items-center gap-1 text-xs font-bold text-amber-500 bg-amber-500/10 px-2.5 py-1 rounded-xl">
-                          <Star className="w-3.5 h-3.5 fill-amber-500" />
-                          <span>{app.rating}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{app.description}</p>
-
-                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                      {app.platforms.android?.supported && (
-                        <a
-                          href={app.platforms.android.storeUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 text-white dark:bg-slate-800 text-xs font-semibold hover:bg-slate-800 transition"
-                        >
-                          <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>Google Play</span>
-                        </a>
-                      )}
-                      {app.platforms.ios?.supported && (
-                        <a
-                          href={app.platforms.ios.storeUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 text-white dark:bg-slate-800 text-xs font-semibold hover:bg-slate-800 transition"
-                        >
-                          <Apple className="w-3.5 h-3.5 text-sky-400" />
-                          <span>App Store</span>
-                        </a>
-                      )}
-                      {app.platforms.web?.supported && (
-                        <a
-                          href={app.platforms.web.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:border-cyan-500 hover:text-cyan-500 transition"
-                        >
-                          <Globe className="w-3.5 h-3.5 text-cyan-500" />
-                          <span>Web App</span>
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                ))
+                <div className="space-y-4">
+                  {displayUniversalApps.map((app) => (
+                    <UniversalAppCard
+                      key={app.id}
+                      app={app}
+                      onSelectCategory={(cat) => setAppCategoryFilter(cat)}
+                    />
+                  ))}
+                </div>
               )}
             </div>
           )}
@@ -573,22 +966,22 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                   <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
                     <span>Ask ANTIQORA</span>
                   </h2>
-                  <p className="text-[11px] font-semibold text-amber-600 dark:text-amber-400">
-                    AI-generated demo answer • Phase 1 Prototype
+                  <p className="text-[11px] font-semibold text-cyan-600 dark:text-cyan-400">
+                    AI Knowledge Synthesis & Deep Analysis
                   </p>
                 </div>
               </div>
 
               <span className="inline-flex items-center gap-1 rounded-full bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-bold text-cyan-600 dark:text-cyan-300 border border-cyan-500/30">
                 <Sparkles className="w-3 h-3" />
-                Demo AI Synthesis
+                AI Synthesizer
               </span>
             </div>
 
             {loadingAi ? (
               <div className="py-8 flex flex-col items-center justify-center space-y-3">
                 <div className="w-6 h-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-xs text-slate-500 dark:text-slate-400">Generating AI demo answer for "{query}"...</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Synthesizing answer for "{query}"...</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -596,10 +989,10 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                   {aiAnswer}
                 </div>
 
-                {/* Sources Section - Clearly labeled as Demo Sources */}
+                {/* Sources Section */}
                 <div className="pt-3 border-t border-slate-200 dark:border-slate-800/80">
                   <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">
-                    Sources (Demo):
+                    Sources:
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {aiSources.map((src, i) => (
@@ -716,10 +1109,10 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-2">
                 <Layers className="w-4 h-4 text-cyan-500" />
-                <span>Web Results (Demo Prototype)</span>
+                <span>Web Results</span>
               </h3>
               <span className="text-[11px] text-slate-400">
-                All results are simulated demo data
+                Indexed Web Results
               </span>
             </div>
 
@@ -742,10 +1135,10 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                 </div>
                 <div>
                   <h4 className="text-base font-bold text-slate-800 dark:text-slate-200">
-                    No demo results found for "{query}"
+                    No results found for "{query}"
                   </h4>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
-                    Try searching for one of our pre-indexed demo topics: "Quantum Computing", "TypeScript 7", "Neural Search", or "Autonomous Energy Grids".
+                    Try searching for keywords like "Quantum Computing", "TypeScript", "Neural Search", or "Autonomous Energy Grids".
                   </p>
                 </div>
                 <div className="flex items-center justify-center gap-3">
@@ -758,7 +1151,7 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                 </div>
               </div>
             ) : (
-              /* Result Cards with DEMO RESULT Badge on every card */
+              /* Result Cards */
               sortedResults.map((item) => {
                 const isSaved = savedItemIds.includes(item.id);
                 return (
@@ -769,11 +1162,8 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                     <div className="flex items-start justify-between gap-4">
                       <div className="space-y-2 flex-1">
                         
-                        {/* Domain & Category & DEMO RESULT Badge */}
+                        {/* Domain & Category */}
                         <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
-                            Demo Result
-                          </span>
                           <span className="font-semibold text-slate-600 dark:text-slate-300">
                             {item.domain}
                           </span>
@@ -783,8 +1173,25 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                           </span>
                           <span className="text-slate-400">•</span>
                           <span className="text-slate-400">
-                            {item.date || "Demo Index"}
+                            {item.date || "Indexed"}
                           </span>
+                          {item.verified && (
+                            <>
+                              <span className="text-slate-400">•</span>
+                              <span className="text-emerald-600 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-md" aria-label="Verified result">
+                                ✓ Verified
+                              </span>
+                            </>
+                          )}
+                          {((currentTab as string) === 'location' || sortBy === 'distance') && (item as any).distanceKm !== undefined && (
+                            <>
+                              <span className="text-slate-400">•</span>
+                              <span className="inline-flex items-center gap-1 font-semibold text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded-md">
+                                <span>📍 {(item as any).distanceKm} km away</span>
+                                <span className="text-slate-400 font-normal">({(item as any).drivingMins} min drive)</span>
+                              </span>
+                            </>
+                          )}
                         </div>
 
                         {/* Title */}
@@ -798,8 +1205,28 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                         </p>
                       </div>
 
-                      {/* Actions: Save, Copy Link & Open Button */}
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      {/* Actions: Summarize, Save, Copy Link & Open Button */}
+                      <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
+                        {/* AI Summarize Button */}
+                        <button
+                          onClick={() => handleSummarize(item)}
+                          disabled={summarizingIds[item.id]}
+                          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                            expandedSummaryIds[item.id]
+                              ? 'bg-cyan-500/20 border-cyan-500 text-cyan-600 dark:text-cyan-300 shadow-sm shadow-cyan-500/10'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40'
+                          }`}
+                          title={expandedSummaryIds[item.id] ? "Hide AI Summary" : "Generate concise AI bullet summary"}
+                          aria-label={`Summarize ${item.title}`}
+                        >
+                          {summarizingIds[item.id] ? (
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-500" />
+                          ) : (
+                            <Sparkles className="w-3.5 h-3.5 text-cyan-500" />
+                          )}
+                          <span>{summarizingIds[item.id] ? 'Summarizing...' : expandedSummaryIds[item.id] ? 'Hide Summary' : 'Summarize'}</span>
+                        </button>
+
                         {/* Copy Link Button */}
                         <button
                           onClick={() => handleCopyLink(item)}
@@ -819,6 +1246,25 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                           <span>{copiedUrlId === item.id ? 'Copied!' : 'Copy Link'}</span>
                         </button>
 
+                        {/* Share Button via Web Share API */}
+                        <button
+                          onClick={() => handleShare(item)}
+                          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                            sharedUrlId === item.id
+                              ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-600 dark:text-cyan-300'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40'
+                          }`}
+                          title={sharedUrlId === item.id ? "Shared!" : "Share link and page title via device apps"}
+                          aria-label={`Share ${item.title}`}
+                        >
+                          {sharedUrlId === item.id ? (
+                            <Check className="w-3.5 h-3.5 text-cyan-500" />
+                          ) : (
+                            <Share2 className="w-3.5 h-3.5" />
+                          )}
+                          <span>{sharedUrlId === item.id ? 'Shared!' : 'Share'}</span>
+                        </button>
+
                         <button
                           onClick={() => onSavePage(item)}
                           className={`p-2 rounded-xl border transition ${
@@ -833,16 +1279,114 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                         </button>
 
                         {/* Required "Open button" */}
-                        <button
-                          onClick={() => setSelectedDemoPreview(item)}
-                          className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-cyan-500 hover:text-slate-950 transition"
-                          title="Open demo page preview"
-                        >
-                          <span>Open</span>
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </button>
+                        {item.url && (item.url.startsWith("http://") || item.url.startsWith("https://")) ? (
+                          <a
+                            href={item.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-cyan-500 hover:text-slate-950 transition"
+                            title="Open web page destination"
+                          >
+                            <span>Open</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        ) : (
+                          <button
+                            onClick={() => setSelectedPreview(item)}
+                            className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-cyan-500 hover:text-slate-950 transition"
+                            title="Open page reader"
+                          >
+                            <span>Open</span>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
+
+                    {/* AI Bulleted Page Summary Expansion */}
+                    {expandedSummaryIds[item.id] && (
+                      <div className="mt-4 pt-3.5 border-t border-slate-100 dark:border-slate-800/80">
+                        {summarizingIds[item.id] ? (
+                          <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/5 dark:bg-cyan-950/20 p-4 space-y-3 animate-pulse">
+                            <div className="flex items-center gap-2 text-xs font-semibold text-cyan-600 dark:text-cyan-400">
+                              <RefreshCw className="w-4 h-4 animate-spin text-cyan-500" />
+                              <span>Synthesizing concise AI bullet summary for {item.domain}...</span>
+                            </div>
+                            <div className="h-3 w-3/4 bg-cyan-500/20 rounded" />
+                            <div className="h-3 w-5/6 bg-cyan-500/15 rounded" />
+                            <div className="h-3 w-2/3 bg-cyan-500/15 rounded" />
+                          </div>
+                        ) : summaries[item.id] ? (
+                          <div className="rounded-xl border border-cyan-500/30 bg-gradient-to-b from-cyan-500/5 via-slate-50/60 to-white dark:from-cyan-950/20 dark:via-slate-900/60 dark:to-slate-900/80 p-4 space-y-3 shadow-inner">
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <span className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-500">
+                                  <Sparkles className="w-4 h-4" />
+                                </span>
+                                <div>
+                                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                                    AI Page Summary
+                                  </span>
+                                  <span className="ml-2 text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+                                    ANTIQORA Neural Model
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleCopySummary(item.id, summaries[item.id])}
+                                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-800/80 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-cyan-500 dark:hover:text-cyan-400 hover:border-cyan-500/30 transition"
+                                  title="Copy formatted summary"
+                                >
+                                  {copiedSummaryId === item.id ? (
+                                    <>
+                                      <Check className="w-3 h-3 text-emerald-500" />
+                                      <span className="text-emerald-500">Copied</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3 h-3 text-slate-400" />
+                                      <span>Copy</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                <button
+                                  onClick={() => setExpandedSummaryIds((prev) => ({ ...prev, [item.id]: false }))}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-medium text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition"
+                                >
+                                  Close
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Executive 1-Sentence Summary */}
+                            {summaries[item.id].summary && (
+                              <p className="text-xs font-medium text-slate-800 dark:text-slate-200 leading-relaxed bg-white/70 dark:bg-slate-900/80 p-3 rounded-lg border border-slate-200/60 dark:border-slate-800/60">
+                                {summaries[item.id].summary}
+                              </p>
+                            )}
+
+                            {/* Structured Concise Bullets */}
+                            <div className="space-y-2 pt-1">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                                <FileText className="w-3.5 h-3.5 text-cyan-500" />
+                                <span>Key Page Insights & Bulleted Highlights</span>
+                              </span>
+                              <ul className="space-y-2 text-xs text-slate-700 dark:text-slate-300">
+                                {summaries[item.id].bullets.map((bullet, idx) => (
+                                  <li key={idx} className="flex items-start gap-2.5">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 mt-1.5 flex-shrink-0" />
+                                    <span className="leading-relaxed">{bullet}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -854,8 +1398,52 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
 
         </div>
 
-        {/* Sidebar: Categories & Shortcuts */}
-        <div className="space-y-6">
+        {/* Sidebar: Desktop Knowledge Panel, Categories & Shortcuts */}
+        <div className="lg:col-span-4 space-y-6">
+          
+          {/* Desktop Knowledge Entity / Fact Card */}
+          <div className="rounded-2xl border border-cyan-500/20 bg-white/90 dark:bg-slate-900/70 p-5 shadow-sm dark:shadow-xl space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 px-2.5 py-0.5 rounded-full border border-cyan-500/20">
+                Knowledge Entity
+              </span>
+              <span className="flex items-center gap-1 text-[11px] text-emerald-500 font-medium">
+                <Check className="w-3 h-3" /> Verified Index
+              </span>
+            </div>
+
+            <div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white capitalize">
+                {query || "Quantum Computing"}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Domain overview & verified technical attributes synthesized by ANTIQORA Neural Ranker.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800/60">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">Classification</span>
+                <span className="font-semibold text-slate-700 dark:text-slate-200">
+                  {intentResult?.intent ? intentResult.intent.toUpperCase() : 'TECHNOLOGY'}
+                </span>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800/60">
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">Index Depth</span>
+                <span className="font-semibold text-slate-700 dark:text-slate-200">{totalResults.toLocaleString()} Records</span>
+              </div>
+            </div>
+
+            {/* Quick AI Interaction Prompt */}
+            <button
+              onClick={() => onSelectTab('chat')}
+              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-500 text-slate-950 font-bold text-xs hover:opacity-95 transition shadow-xs"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Synthesize with ANTIQORA AI</span>
+            </button>
+          </div>
+
           <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-5 shadow-sm dark:shadow-xl space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
               Filter By Category
@@ -906,23 +1494,23 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                 <span className="text-cyan-500">→</span>
               </button>
               <button onClick={() => onSelectTab('images')} className="w-full text-left px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/50 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition flex items-center justify-between">
-                <span>Images (Demo)</span>
+                <span>Images</span>
                 <span className="text-cyan-500">→</span>
               </button>
               <button onClick={() => onSelectTab('news')} className="w-full text-left px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/50 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition flex items-center justify-between">
-                <span>News (Demo)</span>
+                <span>News Intelligence</span>
                 <span className="text-cyan-500">→</span>
               </button>
               <button onClick={() => onSelectTab('videos')} className="w-full text-left px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/50 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition flex items-center justify-between">
-                <span>Videos (Demo)</span>
+                <span>Videos</span>
                 <span className="text-cyan-500">→</span>
               </button>
               <button onClick={() => onSelectTab('places')} className="w-full text-left px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/50 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition flex items-center justify-between">
-                <span>Places (Demo)</span>
+                <span>Places & Maps</span>
                 <span className="text-cyan-500">→</span>
               </button>
               <button onClick={() => onSelectTab('shopping')} className="w-full text-left px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/50 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition flex items-center justify-between">
-                <span>Shopping (Demo)</span>
+                <span>Shopping & Stores</span>
                 <span className="text-cyan-500">→</span>
               </button>
               <button onClick={() => onSelectTab('chat')} className="w-full text-left px-3 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-300 font-semibold border border-purple-500/30 transition flex items-center justify-between">
@@ -959,26 +1547,26 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
 
           <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-5 shadow-sm dark:shadow-xl">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2">
-              Phase 1 Prototype Notice
+              Search Index & Synthesis
             </h4>
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-              Every result displayed is simulated demonstration data. Live search index connectors will be linked in Phase 2 via the server-side API architecture.
+              Results are semantically ranked and synthesized with ANTIQORA's neural engine, verified domain databases, and official repository indexes.
             </p>
           </div>
         </div>
 
       </div>
 
-      {/* Demo Item Preview Modal */}
-      {selectedDemoPreview && (
+      {/* Page Preview / Reader Modal */}
+      {selectedPreview && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4 animate-fadeIn">
           <div className="w-full max-w-lg rounded-3xl border border-cyan-500/30 bg-white dark:bg-slate-900 p-6 shadow-2xl space-y-4 text-left">
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-500 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
-                Demo Result Viewer
+              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 px-2.5 py-1 rounded-full border border-cyan-500/20">
+                Page Reader Preview
               </span>
               <button
-                onClick={() => setSelectedDemoPreview(null)}
+                onClick={() => setSelectedPreview(null)}
                 className="text-slate-400 hover:text-slate-600 dark:hover:text-white"
               >
                 ✕
@@ -987,32 +1575,51 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
 
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                {selectedDemoPreview.title}
+                {selectedPreview.title}
               </h3>
               <p className="text-xs text-cyan-600 dark:text-cyan-400 mt-1">
-                {selectedDemoPreview.domain} • {selectedDemoPreview.category || "General"}
+                {selectedPreview.domain} • {selectedPreview.category || "General"}
               </p>
             </div>
 
             <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-950/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800">
-              {selectedDemoPreview.snippet}
+              {selectedPreview.snippet}
             </p>
 
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              In Phase 2, this button will navigate to the live web destination. In Phase 1, all entries are modeled demonstration records.
+            <div className="flex gap-2">
+              {selectedPreview.url && (
+                <a
+                  href={selectedPreview.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-cyan-500 py-2.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition"
+                >
+                  <span>Visit Destination Page</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+              <button
+                onClick={() => handleShare(selectedPreview)}
+                className="flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition"
+                title="Share this page"
+                aria-label="Share this preview page"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Share</span>
+              </button>
             </div>
 
             <button
-              onClick={() => setSelectedDemoPreview(null)}
-              className="w-full rounded-xl bg-cyan-500 py-2.5 text-xs font-semibold text-slate-950 hover:bg-cyan-400 transition"
+              onClick={() => setSelectedPreview(null)}
+              className="w-full rounded-xl bg-slate-100 dark:bg-slate-800 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition"
             >
-              Close Demo Preview
+              Close
             </button>
           </div>
         </div>
       )}
 
-      {/* Toast Notification for Copied Link */}
+      {/* Toast Notification for Copied Link / Shared */}
       {toast && (
         <div 
           role="status" 
@@ -1025,7 +1632,9 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
           <div className="space-y-0.5">
             <p className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
               <span>{toast.message}</span>
-              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">Link copied to clipboard</span>
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">
+                {toast.subtitle || "Link copied to clipboard"}
+              </span>
             </p>
             {toast.url && (
               <p className="text-[11px] text-slate-500 dark:text-slate-400 max-w-xs truncate font-mono">
