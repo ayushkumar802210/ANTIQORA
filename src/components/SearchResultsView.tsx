@@ -5,11 +5,19 @@ import { settingsManager } from '../services/settingsManager';
 import { locationService } from '../services/locationService';
 import { GitHubSearchResult } from '../services/providers/GithubSearchProvider';
 import { 
+  sanitizeSearchText, 
+  cleanTitle, 
+  cleanSnippet, 
+  cleanDomain 
+} from '../services/textSanitizer';
+import { 
   TabType, 
   OfficialWebsiteResult, 
   AppResult, 
   QueryIntentResult 
 } from '../types';
+import { PersonKnowledgePanel } from './person/PersonKnowledgePanel';
+import { PersonEntity } from '../services/entityResolution/types';
 import { OfficialDiscoveryCards } from './OfficialDiscoveryCards';
 import { UniversalAppCard } from './UniversalAppCard';
 import { UniversalAppRecord } from '../services/app-discovery/types';
@@ -42,7 +50,9 @@ import {
   Apple,
   Code,
   GitFork,
-  GitPullRequest
+  GitPullRequest,
+  BadgeCheck,
+  ShieldCheck
 } from 'lucide-react';
 
 interface SearchResultsViewProps {
@@ -59,6 +69,7 @@ interface SearchResultsViewProps {
   onSavePage: (item: any) => void;
   savedItemIds: string[];
   intentResult?: QueryIntentResult | null;
+  personEntity?: PersonEntity | null;
   websitesResults?: OfficialWebsiteResult[];
   appsResults?: AppResult[];
   githubResults?: GitHubSearchResult;
@@ -80,6 +91,7 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
   onSavePage,
   savedItemIds,
   intentResult = null,
+  personEntity = null,
   websitesResults = [],
   appsResults = [],
   githubResults = { repositories: [], issues: [], totalCount: 0, isRealApi: false },
@@ -525,6 +537,18 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
         {/* Main Column */}
         <div className="lg:col-span-8 space-y-6">
           
+          {/* Universal Person & Entity Resolution Knowledge Panel */}
+          {personEntity && (
+            <PersonKnowledgePanel
+              entity={personEntity}
+              activeTab={currentTab}
+              onSelectTab={onSelectTab}
+              onSelectDisambiguation={(entityId, name) => {
+                onSelectTab('all');
+              }}
+            />
+          )}
+
           {/* Official Digital Discovery Cards: Websites & Apps */}
           <OfficialDiscoveryCards
             intentResult={intentResult}
@@ -1111,8 +1135,8 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                 <Layers className="w-4 h-4 text-cyan-500" />
                 <span>Web Results</span>
               </h3>
-              <span className="text-[11px] text-slate-400">
-                Indexed Web Results
+              <span className="text-[11px] font-medium text-slate-400">
+                Verified Web Index
               </span>
             </div>
 
@@ -1154,39 +1178,88 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
               /* Result Cards */
               sortedResults.map((item) => {
                 const isSaved = savedItemIds.includes(item.id);
+                const displayDomain = cleanDomain(item.domain || item.url);
+                const displayTitle = cleanTitle(item.title, displayDomain);
+                const displaySnippet = cleanSnippet(item.snippet, displayTitle);
+                const displayCategory = sanitizeSearchText(item.category || "General");
+
+                // Filter out raw crawler/technical dates
+                const rawDate = sanitizeSearchText(item.date || "");
+                const displayDate = (/retrieved|archived|indexed|live knowledge|verified record|just now|recently/i.test(rawDate) || !rawDate)
+                  ? null
+                  : rawDate;
+
+                const isOfficialSite = Boolean(item.isOfficial);
+
                 return (
                   <div
                     key={item.id}
-                    className="group rounded-2xl border border-slate-200 dark:border-slate-800/80 bg-white dark:bg-slate-900/50 p-5 hover:border-cyan-500/40 hover:bg-slate-50/80 dark:hover:bg-slate-900/80 transition-all shadow-sm dark:shadow-lg"
+                    className={`group rounded-2xl border p-5 transition-all space-y-3 ${
+                      isOfficialSite 
+                        ? 'border-cyan-500/40 dark:border-cyan-500/40 bg-gradient-to-br from-cyan-500/[0.04] to-transparent dark:from-cyan-950/25 dark:to-slate-900/60 shadow-xs hover:border-cyan-500/60' 
+                        : 'border-slate-200/90 dark:border-slate-800/80 bg-white dark:bg-slate-900/60 hover:border-cyan-500/40 hover:shadow-md'
+                    }`}
                   >
                     <div className="flex items-start justify-between gap-4">
-                      <div className="space-y-2 flex-1">
+                      <div className="space-y-2.5 flex-1">
                         
-                        {/* Domain & Category */}
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <span className="font-semibold text-slate-600 dark:text-slate-300">
-                            {item.domain}
+                        {/* Domain Label Header & Official / Verified Badges */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {/* Domain Badge */}
+                          <div className="inline-flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-2.5 py-1 rounded-lg border border-slate-200/80 dark:border-slate-700/60">
+                            <img
+                              src={`https://www.google.com/s2/favicons?domain=${displayDomain}&sz=32`}
+                              alt={displayDomain}
+                              className="w-4 h-4 object-contain rounded-xs shrink-0"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display = 'none';
+                              }}
+                            />
+                            <span className="font-bold text-slate-800 dark:text-slate-200 font-mono text-[11px]">
+                              {displayDomain}
+                            </span>
+                          </div>
+
+                          {/* Official Badge */}
+                          {isOfficialSite && (
+                            <span 
+                              className="inline-flex items-center gap-1 text-[11px] font-extrabold text-cyan-700 dark:text-cyan-300 bg-cyan-500/15 dark:bg-cyan-500/20 border border-cyan-500/40 px-2.5 py-0.5 rounded-md shadow-2xs"
+                              aria-label="Official Website"
+                            >
+                              <BadgeCheck className="w-3.5 h-3.5 text-cyan-500 shrink-0" />
+                              <span>Official</span>
+                            </span>
+                          )}
+
+                          {/* Verified Badge */}
+                          {item.verified && !isOfficialSite && (
+                            <span 
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-md"
+                              aria-label="Verified Result"
+                            >
+                              <Check className="w-3 h-3 text-emerald-500 shrink-0" />
+                              <span>Verified</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Strictly Separated Metadata Row */}
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 pt-0.5">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 text-[11px] font-medium capitalize text-slate-600 dark:text-slate-300">
+                            {displayCategory}
                           </span>
-                          <span className="text-slate-400">•</span>
-                          <span className="text-slate-500 dark:text-slate-400 capitalize">
-                            {item.category || "General"}
-                          </span>
-                          <span className="text-slate-400">•</span>
-                          <span className="text-slate-400">
-                            {item.date || "Indexed"}
-                          </span>
-                          {item.verified && (
+                          {displayDate && (
                             <>
-                              <span className="text-slate-400">•</span>
-                              <span className="text-emerald-600 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-md" aria-label="Verified result">
-                                ✓ Verified
+                              <span className="text-slate-300 dark:text-slate-700">•</span>
+                              <span className="text-slate-400 dark:text-slate-500 text-[11px]">
+                                {displayDate}
                               </span>
                             </>
                           )}
                           {((currentTab as string) === 'location' || sortBy === 'distance') && (item as any).distanceKm !== undefined && (
                             <>
-                              <span className="text-slate-400">•</span>
-                              <span className="inline-flex items-center gap-1 font-semibold text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded-md">
+                              <span className="text-slate-300 dark:text-slate-700">•</span>
+                              <span className="inline-flex items-center gap-1 font-semibold text-cyan-600 dark:text-cyan-400 bg-cyan-500/10 px-2 py-0.5 rounded-md text-[11px]">
                                 <span>📍 {(item as any).distanceKm} km away</span>
                                 <span className="text-slate-400 font-normal">({(item as any).drivingMins} min drive)</span>
                               </span>
@@ -1194,98 +1267,49 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                           )}
                         </div>
 
-                        {/* Title */}
-                        <h4 className="text-base sm:text-lg font-semibold text-cyan-600 dark:text-cyan-400 group-hover:underline">
-                          {item.title}
+                        {/* Title - Direct Link */}
+                        <h4 className="text-base sm:text-lg font-bold text-cyan-600 dark:text-cyan-400 group-hover:underline leading-snug pt-0.5">
+                          {item.url && (item.url.startsWith("http://") || item.url.startsWith("https://")) ? (
+                            <a href={item.url} target="_blank" rel="noopener noreferrer" className="hover:text-cyan-500">
+                              {displayTitle}
+                            </a>
+                          ) : (
+                            <span onClick={() => setSelectedPreview(item)} className="cursor-pointer hover:text-cyan-500">
+                              {displayTitle}
+                            </span>
+                          )}
                         </h4>
 
-                        {/* Description */}
-                        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-                          {item.snippet}
+                        {/* Clean Description / Snippet */}
+                        <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
+                          {displaySnippet}
                         </p>
                       </div>
 
-                      {/* Actions: Summarize, Save, Copy Link & Open Button */}
-                      <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
-                        {/* AI Summarize Button */}
-                        <button
-                          onClick={() => handleSummarize(item)}
-                          disabled={summarizingIds[item.id]}
-                          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                            expandedSummaryIds[item.id]
-                              ? 'bg-cyan-500/20 border-cyan-500 text-cyan-600 dark:text-cyan-300 shadow-sm shadow-cyan-500/10'
-                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40'
-                          }`}
-                          title={expandedSummaryIds[item.id] ? "Hide AI Summary" : "Generate concise AI bullet summary"}
-                          aria-label={`Summarize ${item.title}`}
-                        >
-                          {summarizingIds[item.id] ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin text-cyan-500" />
-                          ) : (
-                            <Sparkles className="w-3.5 h-3.5 text-cyan-500" />
-                          )}
-                          <span>{summarizingIds[item.id] ? 'Summarizing...' : expandedSummaryIds[item.id] ? 'Hide Summary' : 'Summarize'}</span>
-                        </button>
-
-                        {/* Copy Link Button */}
-                        <button
-                          onClick={() => handleCopyLink(item)}
-                          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                            copiedUrlId === item.id
-                              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
-                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40'
-                          }`}
-                          title={copiedUrlId === item.id ? "URL copied to clipboard" : "Copy link URL"}
-                          aria-label={`Copy link for ${item.title}`}
-                        >
-                          {copiedUrlId === item.id ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-500" />
-                          ) : (
-                            <Link2 className="w-3.5 h-3.5" />
-                          )}
-                          <span>{copiedUrlId === item.id ? 'Copied!' : 'Copy Link'}</span>
-                        </button>
-
-                        {/* Share Button via Web Share API */}
-                        <button
-                          onClick={() => handleShare(item)}
-                          className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                            sharedUrlId === item.id
-                              ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-600 dark:text-cyan-300'
-                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40'
-                          }`}
-                          title={sharedUrlId === item.id ? "Shared!" : "Share link and page title via device apps"}
-                          aria-label={`Share ${item.title}`}
-                        >
-                          {sharedUrlId === item.id ? (
-                            <Check className="w-3.5 h-3.5 text-cyan-500" />
-                          ) : (
-                            <Share2 className="w-3.5 h-3.5" />
-                          )}
-                          <span>{sharedUrlId === item.id ? 'Shared!' : 'Share'}</span>
-                        </button>
-
+                      {/* Clean Actions: Bookmark & Open */}
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {/* Bookmark Button */}
                         <button
                           onClick={() => onSavePage(item)}
-                          className={`p-2 rounded-xl border transition ${
+                          className={`p-2 rounded-xl border transition-colors ${
                             isSaved 
                               ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-600 dark:text-cyan-400' 
-                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-400 hover:text-slate-800 dark:hover:text-white'
+                              : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-400 hover:text-slate-800 dark:hover:text-white hover:border-slate-300 dark:hover:border-slate-700'
                           }`}
                           title={isSaved ? "Saved to bookmarks" : "Save result"}
                           aria-label="Save bookmark"
                         >
-                          {isSaved ? <Check className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
+                          {isSaved ? <Check className="w-4 h-4 text-cyan-500" /> : <Bookmark className="w-4 h-4" />}
                         </button>
 
-                        {/* Required "Open button" */}
+                        {/* Open Destination Button */}
                         {item.url && (item.url.startsWith("http://") || item.url.startsWith("https://")) ? (
                           <a
                             href={item.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-cyan-500 hover:text-slate-950 transition"
-                            title="Open web page destination"
+                            className="flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-cyan-500 hover:text-slate-950 transition-all shadow-2xs"
+                            title="Open web page"
                           >
                             <span>Open</span>
                             <ExternalLink className="w-3.5 h-3.5" />
@@ -1293,7 +1317,7 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                         ) : (
                           <button
                             onClick={() => setSelectedPreview(item)}
-                            className="flex items-center gap-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-cyan-500 hover:text-slate-950 transition"
+                            className="flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-cyan-500 hover:text-slate-950 transition-all shadow-2xs"
                             title="Open page reader"
                           >
                             <span>Open</span>

@@ -66,6 +66,9 @@ export const ImagesView: React.FC<ImagesViewProps> = ({ initialQuery = '', image
                 alt={img.title}
                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                 loading="lazy"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=800&q=80";
+                }}
               />
             </div>
 

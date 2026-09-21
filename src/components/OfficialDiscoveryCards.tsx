@@ -4,6 +4,7 @@ import {
   AppResult, 
   QueryIntentResult 
 } from '../types';
+import { sanitizeSearchText, cleanDomain } from '../services/textSanitizer';
 import { 
   Globe, 
   ExternalLink, 
@@ -128,7 +129,7 @@ export const OfficialDiscoveryCards: React.FC<OfficialDiscoveryCardsProps> = ({
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                      {officialWebsite.name}
+                      {sanitizeSearchText(officialWebsite.name || officialWebsite.title)}
                     </h3>
                     {officialWebsite.isVerified ? (
                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
@@ -145,7 +146,7 @@ export const OfficialDiscoveryCards: React.FC<OfficialDiscoveryCardsProps> = ({
 
                   {/* Clean Domain */}
                   <p className="text-xs font-mono font-medium text-cyan-600 dark:text-cyan-400 mt-0.5">
-                    {officialWebsite.domain}
+                    {cleanDomain(officialWebsite.domain || officialWebsite.url)}
                   </p>
                 </div>
               </div>
@@ -204,7 +205,7 @@ export const OfficialDiscoveryCards: React.FC<OfficialDiscoveryCardsProps> = ({
 
             {/* Short Description */}
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-              {officialWebsite.description}
+              {sanitizeSearchText(officialWebsite.description)}
             </p>
 
             {/* Verification Note or Safety Warning */}

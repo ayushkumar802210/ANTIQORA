@@ -13,6 +13,13 @@ import {
   RoadmapPhase,
   QueryIntentCategory
 } from '../types';
+import { 
+  normalizeSearchResult, 
+  sanitizeSearchText, 
+  cleanTitle, 
+  cleanSnippet, 
+  cleanDomain 
+} from './textSanitizer';
 
 export interface SearchResultItem {
   id: string;
@@ -25,6 +32,8 @@ export interface SearchResultItem {
   era?: 'past' | 'present' | 'future';
   verification?: FactVerificationStatus;
   verified?: boolean;
+  isOfficial?: boolean;
+  source?: string;
 }
 
 export interface ImageResultItem {
@@ -178,6 +187,7 @@ export type SearchResult = {
 export type SearchResponse = {
   results: SearchResultItem[];
   totalResults: number;
+  personEntity?: any | null;
   isRealApi: boolean;
   status: "success" | "offline" | "error";
   message?: string;
@@ -219,28 +229,15 @@ export async function searchWeb(
     }
 
     const mappedResults: SearchResultItem[] = data.results.map((item: any, idx: number) => {
-      let domain = "antiqora.io";
-      try {
-        domain = new URL(item.url || "https://antiqora.io").hostname.replace(/^www\./, "");
-      } catch {}
-
-      return {
-        id: `web_${idx}_${Date.now()}`,
-        title: String(item.title || ""),
-        url: String(item.url || ""),
-        domain,
-        snippet: String(item.snippet || ""),
-        category: String(item.category || "Web"),
-        date: String(item.date || "Recently"),
-        verified: item.verified === true,
-        verification: item.verified === true ? "verified" : "unverified",
-        source: "web"
-      };
+      const normalized = normalizeSearchResult(item);
+      if (item.id) normalized.id = String(item.id);
+      return normalized;
     });
 
     return {
       results: mappedResults,
       totalResults: data.totalResults ?? mappedResults.length,
+      personEntity: data.personEntity || null,
       isRealApi: true,
       status: "success",
     };

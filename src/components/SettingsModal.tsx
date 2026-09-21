@@ -456,8 +456,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 p-5 space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-2xl bg-cyan-500 text-slate-950 font-bold flex items-center justify-center text-lg shadow-md">
-                      {user.name.charAt(0).toUpperCase()}
+                    <div className="w-12 h-12 rounded-2xl overflow-hidden bg-cyan-500 text-slate-950 font-bold flex items-center justify-center text-lg shadow-md border border-cyan-500/50">
+                      {user.avatar ? (
+                        <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+                      ) : (
+                        user.name.charAt(0).toUpperCase()
+                      )}
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-slate-900 dark:text-white">{user.name}</h4>

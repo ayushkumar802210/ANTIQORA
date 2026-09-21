@@ -85,8 +85,12 @@ export const AccountSyncView: React.FC<AccountSyncViewProps> = ({
         {/* Profile / Sync Status Card */}
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-6 space-y-5 shadow-sm">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-500 font-extrabold text-xl">
-              {user.name[0]?.toUpperCase() || 'U'}
+            <div className="w-14 h-14 rounded-2xl overflow-hidden bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-500 font-extrabold text-xl">
+              {user.avatar ? (
+                <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+              ) : (
+                user.name[0]?.toUpperCase() || 'U'
+              )}
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900 dark:text-white">{user.name}</h2>

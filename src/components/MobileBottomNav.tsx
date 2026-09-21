@@ -1,12 +1,9 @@
 import React from 'react';
 import { 
   Home, 
-  Sparkles, 
-  Layers, 
-  History, 
-  MoreHorizontal,
-  Bookmark,
-  Search
+  Search,
+  Bell,
+  User
 } from 'lucide-react';
 import { TabType, FullPageView } from '../types';
 
@@ -14,9 +11,8 @@ interface MobileBottomNavProps {
   currentTab: TabType;
   onSelectTab: (tab: TabType) => void;
   onGoHome: () => void;
-  tabCount: number;
-  onOpenTabsSwitcher: () => void;
-  onOpenMobileMenu: () => void;
+  onOpenAuth: () => void;
+  onOpenNotifications?: () => void;
   onNavigateFullPage: (view: FullPageView) => void;
   isIncognito?: boolean;
 }
@@ -25,9 +21,8 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
   currentTab,
   onSelectTab,
   onGoHome,
-  tabCount,
-  onOpenTabsSwitcher,
-  onOpenMobileMenu,
+  onOpenAuth,
+  onOpenNotifications,
   onNavigateFullPage,
   isIncognito = false
 }) => {
@@ -40,9 +35,9 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       } shadow-[0_-4px_20px_rgba(0,0,0,0.08)] dark:shadow-[0_-4px_25px_rgba(0,0,0,0.4)] pb-safe`}
       aria-label="Mobile Navigation"
     >
-      <div className="flex items-center justify-around px-2 py-1.5 h-14 max-w-lg mx-auto">
+      <div className="flex items-center justify-around px-2 py-1 h-14 max-w-lg mx-auto">
         
-        {/* 1. Home / Search Button */}
+        {/* 1. Home */}
         <button
           type="button"
           onClick={onGoHome}
@@ -51,73 +46,67 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
               ? 'text-cyan-600 dark:text-cyan-400 font-bold'
               : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
           }`}
-          aria-label="Home Search"
+          aria-label="Home"
         >
           <div className={`p-1 rounded-lg transition-transform ${currentTab === 'home' ? 'scale-110' : ''}`}>
             <Home className="w-5 h-5" />
           </div>
-          <span className="text-[10px] tracking-tight">Search</span>
+          <span className="text-[10px] tracking-tight font-medium">Home</span>
         </button>
 
-        {/* 2. AI Neural / Chat Mode */}
+        {/* 2. Search */}
         <button
           type="button"
-          onClick={() => onSelectTab('chat')}
+          onClick={() => {
+            onGoHome();
+            setTimeout(() => {
+              const input = document.getElementById('antiqora-main-search') as HTMLInputElement;
+              if (input) input.focus();
+            }, 100);
+          }}
           className={`flex flex-col items-center justify-center flex-1 h-full min-w-[56px] min-h-[44px] rounded-xl transition-all ${
-            currentTab === 'chat'
-              ? 'text-purple-600 dark:text-purple-400 font-bold'
-              : 'text-slate-500 dark:text-slate-400 hover:text-purple-500'
+            currentTab === 'all'
+              ? 'text-cyan-600 dark:text-cyan-400 font-bold'
+              : 'text-slate-500 dark:text-slate-400 hover:text-cyan-500'
           }`}
-          aria-label="AI Neural Assistant"
+          aria-label="Search"
         >
-          <div className={`p-1 rounded-lg transition-transform ${currentTab === 'chat' ? 'scale-110' : ''}`}>
-            <Sparkles className="w-5 h-5 text-purple-500 dark:text-purple-400" />
+          <div className={`p-1 rounded-lg transition-transform ${currentTab === 'all' ? 'scale-110' : ''}`}>
+            <Search className="w-5 h-5" />
           </div>
-          <span className="text-[10px] tracking-tight">AI Neural</span>
+          <span className="text-[10px] tracking-tight font-medium">Search</span>
         </button>
 
-        {/* 3. Bookmarks & History Shortcut */}
+        {/* 3. Notifications */}
         <button
           type="button"
-          onClick={() => onNavigateFullPage('history')}
+          onClick={() => {
+            if (onOpenNotifications) {
+              onOpenNotifications();
+            } else {
+              onNavigateFullPage('help-feedback');
+            }
+          }}
           className="flex flex-col items-center justify-center flex-1 h-full min-w-[56px] min-h-[44px] rounded-xl text-slate-500 dark:text-slate-400 hover:text-cyan-500 transition-all"
-          aria-label="Browsing History"
+          aria-label="Notifications"
         >
           <div className="p-1 rounded-lg">
-            <History className="w-5 h-5" />
+            <Bell className="w-5 h-5" />
           </div>
-          <span className="text-[10px] tracking-tight">History</span>
+          <span className="text-[10px] tracking-tight font-medium">Notifications</span>
         </button>
 
-        {/* 4. Active Tabs Switcher */}
+        {/* 4. Activity / Profile */}
         <button
           type="button"
-          onClick={onOpenTabsSwitcher}
-          className="flex flex-col items-center justify-center flex-1 h-full min-w-[56px] min-h-[44px] rounded-xl text-slate-600 dark:text-slate-300 hover:text-cyan-500 transition-all"
-          aria-label={`Open tabs switcher, ${tabCount} active tabs`}
-        >
-          <div className="relative p-1">
-            <div className="w-5 h-5 rounded-md border-2 border-current flex items-center justify-center font-mono font-bold text-[10px]">
-              {tabCount}
-            </div>
-            {isIncognito && (
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-purple-500 ring-2 ring-slate-950" />
-            )}
-          </div>
-          <span className="text-[10px] tracking-tight">Tabs</span>
-        </button>
-
-        {/* 5. Mobile Menu / More Drawer */}
-        <button
-          type="button"
-          onClick={onOpenMobileMenu}
+          onClick={onOpenAuth}
           className="flex flex-col items-center justify-center flex-1 h-full min-w-[56px] min-h-[44px] rounded-xl text-slate-500 dark:text-slate-400 hover:text-cyan-500 transition-all"
-          aria-label="Open Mobile Menu"
+          aria-label="Activity or Profile"
         >
           <div className="p-1 rounded-lg">
-            <MoreHorizontal className="w-5 h-5" />
+            <User className="w-5 h-5" />
           </div>
-          <span className="text-[10px] tracking-tight">More</span>
+          <span className="text-[10px] tracking-tight font-medium">Profile</span>
         </button>
 
       </div>

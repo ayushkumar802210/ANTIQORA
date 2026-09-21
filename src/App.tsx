@@ -269,6 +269,7 @@ export default function App() {
 
   // Apps & Websites Discovery state
   const [intentResult, setIntentResult] = useState<QueryIntentResult | null>(null);
+  const [personEntity, setPersonEntity] = useState<any | null>(null);
   const [websitesResults, setWebsitesResults] = useState<OfficialWebsiteResult[]>([]);
   const [appsResults, setAppsResults] = useState<AppResult[]>([]);
 
@@ -429,6 +430,10 @@ export default function App() {
     const newTitle = isUrl ? trimmed : `Search: ${trimmed}`;
     const newUrl = isUrl ? (trimmed.startsWith('http') ? trimmed : `https://${trimmed}`) : `antiqora://search?q=${encodeURIComponent(trimmed)}`;
 
+    const stack = activeTab.historyStack || ['antiqora://newtab'];
+    const currentIdx = activeTab.historyIndex !== undefined ? activeTab.historyIndex : stack.length - 1;
+    const newStack = [...stack.slice(0, currentIdx + 1), newUrl];
+
     handleUpdateTab(activeTabId, {
       title: newTitle,
       url: newUrl,
@@ -437,8 +442,8 @@ export default function App() {
       activeQuery: trimmed,
       currentSubTab: targetTab === 'home' ? 'all' : targetTab,
       currentTab: targetTab === 'home' ? 'all' : targetTab,
-      historyStack: [...(activeTab.historyStack || []), newUrl],
-      historyIndex: (activeTab.historyIndex || 0) + 1
+      historyStack: newStack,
+      historyIndex: newStack.length - 1
     });
 
     if (!activeTab.isIncognito) {
@@ -493,6 +498,7 @@ export default function App() {
       setTimelineEvents(overviewRes.past.events);
       setFutureScenarios(overviewRes.future.scenarios);
       setIntentResult(intentRes);
+      setPersonEntity(webRes.personEntity || null);
       setWebsitesResults(sitesRes);
       setAppsResults(appsRes);
       setGithubResults(githubRes);
@@ -546,34 +552,107 @@ export default function App() {
   const handleGoBack = () => {
     if (!canGoBack) return;
     const newIdx = (activeTab.historyIndex || 0) - 1;
-    const prevUrl = activeTab.historyStack?.[newIdx] || 'antiqora://newtab';
-    handleUpdateTab(activeTabId, {
-      historyIndex: newIdx,
-      url: prevUrl,
-      currentSubTab: prevUrl === 'antiqora://newtab' ? 'home' : activeTab.currentSubTab,
-      currentTab: prevUrl === 'antiqora://newtab' ? 'home' : activeTab.currentTab
-    });
+    const stack = activeTab.historyStack || ['antiqora://newtab'];
+    const prevUrl = stack[newIdx] || 'antiqora://newtab';
+
+    setFullPageView(null);
+
+    if (prevUrl === 'antiqora://newtab') {
+      handleUpdateTab(activeTabId, {
+        historyIndex: newIdx,
+        url: prevUrl,
+        title: 'New Tab',
+        currentSubTab: 'home',
+        currentTab: 'home',
+        query: '',
+        searchQuery: '',
+        activeQuery: ''
+      });
+    } else if (prevUrl.startsWith('antiqora://search?q=')) {
+      const parsedQuery = decodeURIComponent(prevUrl.replace('antiqora://search?q=', ''));
+      handleUpdateTab(activeTabId, {
+        historyIndex: newIdx,
+        url: prevUrl,
+        title: `Search: ${parsedQuery}`,
+        currentSubTab: activeTab.currentSubTab === 'home' ? 'all' : activeTab.currentSubTab,
+        currentTab: activeTab.currentTab === 'home' ? 'all' : activeTab.currentTab,
+        query: parsedQuery,
+        searchQuery: parsedQuery,
+        activeQuery: parsedQuery
+      });
+      if (parsedQuery) {
+        executeSearch(parsedQuery, activeTab.currentTab === 'home' ? 'all' : activeTab.currentTab);
+      }
+    } else {
+      handleUpdateTab(activeTabId, {
+        historyIndex: newIdx,
+        url: prevUrl,
+        title: prevUrl
+      });
+    }
   };
 
   const handleGoForward = () => {
     if (!canGoForward) return;
     const newIdx = (activeTab.historyIndex || 0) + 1;
-    const nextUrl = activeTab.historyStack?.[newIdx];
-    handleUpdateTab(activeTabId, {
-      historyIndex: newIdx,
-      url: nextUrl
-    });
+    const stack = activeTab.historyStack || ['antiqora://newtab'];
+    const nextUrl = stack[newIdx];
+    if (!nextUrl) return;
+
+    setFullPageView(null);
+
+    if (nextUrl === 'antiqora://newtab') {
+      handleUpdateTab(activeTabId, {
+        historyIndex: newIdx,
+        url: nextUrl,
+        title: 'New Tab',
+        currentSubTab: 'home',
+        currentTab: 'home',
+        query: '',
+        searchQuery: '',
+        activeQuery: ''
+      });
+    } else if (nextUrl.startsWith('antiqora://search?q=')) {
+      const parsedQuery = decodeURIComponent(nextUrl.replace('antiqora://search?q=', ''));
+      handleUpdateTab(activeTabId, {
+        historyIndex: newIdx,
+        url: nextUrl,
+        title: `Search: ${parsedQuery}`,
+        currentSubTab: activeTab.currentSubTab === 'home' ? 'all' : activeTab.currentSubTab,
+        currentTab: activeTab.currentTab === 'home' ? 'all' : activeTab.currentTab,
+        query: parsedQuery,
+        searchQuery: parsedQuery,
+        activeQuery: parsedQuery
+      });
+      if (parsedQuery) {
+        executeSearch(parsedQuery, activeTab.currentTab === 'home' ? 'all' : activeTab.currentTab);
+      }
+    } else {
+      handleUpdateTab(activeTabId, {
+        historyIndex: newIdx,
+        url: nextUrl,
+        title: nextUrl
+      });
+    }
   };
 
   const handleGoHome = () => {
+    const stack = activeTab.historyStack || ['antiqora://newtab'];
+    const currentIdx = activeTab.historyIndex !== undefined ? activeTab.historyIndex : stack.length - 1;
+    const homeUrl = 'antiqora://newtab';
+    const newStack = stack[currentIdx] === homeUrl ? stack : [...stack.slice(0, currentIdx + 1), homeUrl];
+    const newIdx = newStack.length - 1;
+
     handleUpdateTab(activeTabId, {
       title: 'New Tab',
-      url: 'antiqora://newtab',
+      url: homeUrl,
       currentSubTab: 'home',
       currentTab: 'home',
       query: '',
       searchQuery: '',
-      activeQuery: ''
+      activeQuery: '',
+      historyStack: newStack,
+      historyIndex: newIdx
     });
     setFullPageView(null);
   };
@@ -714,66 +793,69 @@ export default function App() {
         </div>
       )}
 
-      {/* DESKTOP TAB BAR */}
-      <BrowserTabBar
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onSwitchTab={handleSwitchTab}
-        onCloseTab={handleCloseTab}
-        onNewTab={handleCreateNewTab}
-        onDuplicateTab={handleDuplicateTab}
-        onPinTab={handlePinTab}
-        tabGroups={tabGroups}
-        onOpenMobileSwitcher={() => setIsMobileTabSwitcherOpen(true)}
-        onOpenTabGroupModal={() => setIsTabGroupModalOpen(true)}
-      />
+      {/* DESKTOP TAB BAR & NAVIGATION HEADER (Visible after search) */}
+      {(currentTab !== 'home' || Boolean(activeQuery)) && (
+        <>
+          <BrowserTabBar
+            tabs={tabs}
+            activeTabId={activeTabId}
+            onSwitchTab={handleSwitchTab}
+            onCloseTab={handleCloseTab}
+            onNewTab={handleCreateNewTab}
+            onDuplicateTab={handleDuplicateTab}
+            onPinTab={handlePinTab}
+            tabGroups={tabGroups}
+            onOpenMobileSwitcher={() => setIsMobileTabSwitcherOpen(true)}
+            onOpenTabGroupModal={() => setIsTabGroupModalOpen(true)}
+          />
 
-      {/* NAVIGATION HEADER & THREE-DOT MENU */}
-      <Navbar
-        currentTab={currentTab}
-        onSelectTab={(tab) => {
-          if (tab === 'home') {
-            handleUpdateTab(activeTabId, { currentSubTab: 'home', currentTab: 'home' });
-          } else {
-            handleUpdateTab(activeTabId, { currentSubTab: tab, currentTab: tab });
-            if (!activeQuery && tab !== 'chat' && tab !== 'translate') {
-              executeSearch("Quantum Computing", tab);
-            }
-          }
-        }}
-        onOpenAuth={() => setIsAuthOpen(true)}
-        onOpenSettings={() => setFullPageView('settings')}
-        onOpenRoadmap={() => setIsRoadmapOpen(true)}
-        onOpenCrawlerAdmin={() => setIsSearchAdminOpen(true)}
-        onOpenVisual={() => setIsVisualOpen(true)}
-        onOpenDocument={() => setIsDocOpen(true)}
-        currentLanguage={currentLanguage}
-        onSelectLanguage={setCurrentLanguage}
-        user={user}
-        theme={theme}
-        onToggleTheme={handleToggleTheme}
-        showSearchBar={currentTab !== 'home'}
-        searchQuery={searchQuery}
-        onSearchChange={(q) => handleUpdateTab(activeTabId, { query: q, searchQuery: q })}
-        onExecuteSearch={(e) => executeSearch(searchQuery, currentTab, e)}
-        onVoiceSearch={() => setIsVoiceOpen(true)}
+          <Navbar
+            currentTab={currentTab}
+            onSelectTab={(tab) => {
+              if (tab === 'home') {
+                handleUpdateTab(activeTabId, { currentSubTab: 'home', currentTab: 'home' });
+              } else {
+                handleUpdateTab(activeTabId, { currentSubTab: tab, currentTab: tab });
+                if (!activeQuery && tab !== 'chat' && tab !== 'translate') {
+                  executeSearch("Quantum Computing", tab);
+                }
+              }
+            }}
+            onOpenAuth={() => setIsAuthOpen(true)}
+            onOpenSettings={() => setFullPageView('settings')}
+            onOpenRoadmap={() => setIsRoadmapOpen(true)}
+            onOpenCrawlerAdmin={() => setIsSearchAdminOpen(true)}
+            onOpenVisual={() => setIsVisualOpen(true)}
+            onOpenDocument={() => setIsDocOpen(true)}
+            currentLanguage={currentLanguage}
+            onSelectLanguage={setCurrentLanguage}
+            user={user}
+            theme={theme}
+            onToggleTheme={handleToggleTheme}
+            showSearchBar={currentTab !== 'home'}
+            searchQuery={searchQuery}
+            onSearchChange={(q) => handleUpdateTab(activeTabId, { query: q, searchQuery: q })}
+            onExecuteSearch={(e) => executeSearch(searchQuery, currentTab, e)}
+            onVoiceSearch={() => setIsVoiceOpen(true)}
 
-        // Browser Nav & Three Dot
-        canGoBack={canGoBack}
-        canGoForward={canGoForward}
-        onGoBack={handleGoBack}
-        onGoForward={handleGoForward}
-        onReload={handleReload}
-        onGoHome={handleGoHome}
-        isIncognito={activeTab.isIncognito}
-        onNewTab={handleCreateNewTab}
-        onAddTabToNewGroup={() => setIsTabGroupModalOpen(true)}
-        onOpenAIMode={() => handleUpdateTab(activeTabId, { currentSubTab: 'chat', currentTab: 'chat' })}
-        onOpenGitHub={() => window.open('https://github.com', '_blank')}
-        onNavigateFullPage={(v) => setFullPageView(v)}
-        tabCount={tabs.filter(t => !t.isIncognito).length}
-        incognitoCount={tabs.filter(t => t.isIncognito).length}
-      />
+            // Browser Nav & Three Dot
+            canGoBack={canGoBack}
+            canGoForward={canGoForward}
+            onGoBack={handleGoBack}
+            onGoForward={handleGoForward}
+            onReload={handleReload}
+            onGoHome={handleGoHome}
+            isIncognito={activeTab.isIncognito}
+            onNewTab={handleCreateNewTab}
+            onAddTabToNewGroup={() => setIsTabGroupModalOpen(true)}
+            onOpenAIMode={() => handleUpdateTab(activeTabId, { currentSubTab: 'chat', currentTab: 'chat' })}
+            onOpenGitHub={() => window.open('https://github.com', '_blank')}
+            onNavigateFullPage={(v) => setFullPageView(v)}
+            tabCount={tabs.filter(t => !t.isIncognito).length}
+            incognitoCount={tabs.filter(t => t.isIncognito).length}
+          />
+        </>
+      )}
 
       {/* MAIN VIEW CONTENT */}
       <main className="flex-1">
@@ -788,6 +870,9 @@ export default function App() {
             onOpenVisual={() => setIsVisualOpen(true)}
             onOpenDocument={() => setIsDocOpen(true)}
             onOpenSettings={() => setFullPageView('settings')}
+            onOpenAuth={() => setIsAuthOpen(true)}
+            onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+            user={user}
             theme={theme}
             onSetTheme={setTheme}
             depth={answerDepth}
@@ -825,6 +910,7 @@ export default function App() {
             }}
             savedItemIds={savedItems.map(s => s.id)}
             intentResult={intentResult}
+            personEntity={personEntity}
             websitesResults={websitesResults}
             appsResults={appsResults}
             githubResults={githubResults}
@@ -913,9 +999,8 @@ export default function App() {
           }
         }}
         onGoHome={handleGoHome}
-        tabCount={tabs.length}
-        onOpenTabsSwitcher={() => setIsMobileTabSwitcherOpen(true)}
-        onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+        onOpenAuth={() => setIsAuthOpen(true)}
+        onOpenNotifications={() => setFullPageView('help-feedback')}
         onNavigateFullPage={(v) => setFullPageView(v)}
         isIncognito={activeTab.isIncognito}
       />

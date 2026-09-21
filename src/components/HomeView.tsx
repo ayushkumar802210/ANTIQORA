@@ -1,48 +1,29 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Logo } from './Logo';
-import { AnswerDepth, SearchHistoryItem } from '../types';
-import { SUPPORTED_LANGUAGES } from '../services/languages';
+import { AnswerDepth, SearchHistoryItem, UserProfile } from '../types';
 import { SearchSuggestionsDropdown } from './SearchSuggestionsDropdown';
 import { computeSuggestions } from '../services/suggestionsService';
 import { trendingSearchesService } from '../services/trendingSearchesService';
 import { 
   Search, 
   Mic, 
-  Image as ImageIcon, 
+  Camera, 
+  Image as ImageIcon,
   Sparkles, 
   TrendingUp, 
   Clock, 
-  ArrowRight, 
-  ShieldCheck, 
-  Globe2, 
-  Globe,
-  History,
+  X, 
+  Menu,
+  User,
+  Newspaper,
+  Video,
+  CloudSun,
+  Wind,
+  Droplets,
   ExternalLink,
-  X,
-  Settings,
-  Sun,
-  Moon,
-  Monitor,
-  ScanQrCode,
-  FileText,
-  Compass,
-  Activity,
-  BookOpen,
-  GitCompare,
-  Zap,
-  Cpu,
-  Layers,
-  Code2,
-  Tv,
-  GraduationCap,
-  Bot,
-  Terminal,
-  Share2,
-  Check,
-  RefreshCw,
-  Smartphone,
-  Flame
+  ArrowRight,
+  ShieldCheck
 } from 'lucide-react';
 
 interface HomeViewProps {
@@ -55,12 +36,39 @@ interface HomeViewProps {
   onOpenVisual?: () => void;
   onOpenDocument?: () => void;
   onOpenSettings: () => void;
+  onOpenAuth?: () => void;
+  onOpenMobileMenu?: () => void;
+  user?: UserProfile;
   theme: 'dark' | 'light' | 'system';
   onSetTheme: (t: 'dark' | 'light' | 'system') => void;
   depth?: AnswerDepth;
   onSetDepth?: (depth: AnswerDepth) => void;
   currentLanguage?: string;
   onSelectLanguage?: (lang: string) => void;
+}
+
+interface WeatherData {
+  city: string;
+  temperature: number;
+  unit: string;
+  condition: string;
+  windSpeed: number;
+  weatherCode: number;
+}
+
+interface TrendingItem {
+  id: string;
+  query: string;
+  isHot?: boolean;
+}
+
+interface NewsItem {
+  id: string;
+  title: string;
+  source: string;
+  date: string;
+  summary: string;
+  url: string;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({ 
@@ -71,313 +79,103 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onClearRecent,
   onOpenVoice,
   onOpenVisual,
-  onOpenDocument,
   onOpenSettings,
-  theme,
-  onSetTheme,
-  depth = 'standard',
-  onSetDepth,
-  currentLanguage = 'en',
-  onSelectLanguage
+  onOpenAuth,
+  onOpenMobileMenu,
+  user
 }) => {
   const [query, setQuery] = useState('');
-  const [isAiMode, setIsAiMode] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedImageFile, setSelectedImageFile] = useState<string | null>(null);
   const [serverSuggestions, setServerSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const [activeDiscoverCategory, setActiveDiscoverCategory] = useState<'all' | 'engineering' | 'ai' | 'trending' | 'tools'>('all');
+
+  // Real API State (weather, news, trending)
+  const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [trendingList, setTrendingList] = useState<TrendingItem[]>([]);
+  const [newsList, setNewsList] = useState<NewsItem[]>([]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
-  const [usageTick, setUsageTick] = useState(0);
 
-  // Subscribe to usage updates from the trending searches service
-  useEffect(() => {
-    const unsubscribe = trendingSearchesService.subscribe(() => {
-      setUsageTick(t => t + 1);
-    });
-    return unsubscribe;
-  }, []);
-
-  // Real-time suggestions calculated from query, recent searches, and server autocomplete
+  // Compute autocomplete suggestions dynamically
   const suggestions = useMemo(() => {
     return computeSuggestions(query, recentSearches, serverSuggestions);
   }, [query, recentSearches, serverSuggestions]);
 
-  // Top 5 most frequently accessed URLs or search queries derived from search history
-  const recentlyVisitedItems = useMemo(() => {
-    let allHistory: SearchHistoryItem[] = historyItems && historyItems.length > 0 ? historyItems : [];
-    if (allHistory.length === 0) {
+  // Fetch Real Weather Data if permitted
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchWeather = async (lat?: number, lon?: number) => {
       try {
-        const saved = localStorage.getItem('antiqora_history_items');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) allHistory = parsed;
+        const url = lat && lon 
+          ? `/api/weather?lat=${lat}&lon=${lon}`
+          : `/api/weather`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.available && isMounted) {
+            setWeather({
+              city: data.city || 'Local Area',
+              temperature: data.temperature ?? 24,
+              unit: data.unit || '°C',
+              condition: data.condition || 'Clear',
+              windSpeed: data.windSpeed ?? 10,
+              weatherCode: data.weatherCode ?? 0
+            });
+          }
         }
-      } catch {}
-    }
-
-    const groupedMap = new Map<string, {
-      title: string;
-      target: string;
-      displayDomain: string;
-      isUrl: boolean;
-      count: number;
-      lastVisited: number;
-    }>();
-
-    // Group items by normalized target (url or query)
-    allHistory.forEach(item => {
-      const q = (item.query || '').trim();
-      const rawUrl = (item.url || '').trim();
-      
-      const isActualUrl = Boolean(
-        rawUrl && 
-        rawUrl !== 'antiqora://newtab' && 
-        !rawUrl.startsWith('antiqora://') &&
-        (rawUrl.startsWith('http') || rawUrl.includes('.'))
-      );
-
-      const target = isActualUrl ? rawUrl : q;
-      if (!target) return;
-
-      const normalizedKey = target.toLowerCase();
-      const ts = Number(item.timestamp) || Date.now();
-      
-      let derivedDomain = item.domain || '';
-      if (!derivedDomain && isActualUrl) {
-        try {
-          const u = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
-          derivedDomain = u.hostname.replace(/^www\./, '');
-        } catch {
-          derivedDomain = rawUrl.split('/')[0];
-        }
-      } else if (!derivedDomain) {
-        derivedDomain = 'Search Query';
+      } catch (err) {
+        // Silently fail & hide weather card
       }
-
-      const title = item.title && item.title !== 'New Tab' && item.title !== 'Search' 
-        ? item.title 
-        : (isActualUrl ? derivedDomain : q);
-
-      const existing = groupedMap.get(normalizedKey);
-      if (existing) {
-        existing.count += 1;
-        if (ts > existing.lastVisited) {
-          existing.lastVisited = ts;
-          if (title) existing.title = title;
-        }
-      } else {
-        groupedMap.set(normalizedKey, {
-          title,
-          target,
-          displayDomain: derivedDomain,
-          isUrl: isActualUrl,
-          count: 1,
-          lastVisited: ts,
-        });
-      }
-    });
-
-    // Also factor in recentSearches so recent queries are captured
-    (recentSearches || []).forEach(r => {
-      const q = (r || '').trim();
-      if (!q) return;
-      const key = q.toLowerCase();
-      const existing = groupedMap.get(key);
-      if (existing) {
-        existing.count += 1;
-      } else {
-        groupedMap.set(key, {
-          title: q,
-          target: q,
-          displayDomain: 'Search Query',
-          isUrl: false,
-          count: 1,
-          lastVisited: Date.now(),
-        });
-      }
-    });
-
-    // Curated high-tech baseline defaults if history has fewer than 5 items
-    const baselineVisits: Array<{
-      title: string;
-      target: string;
-      displayDomain: string;
-      isUrl: boolean;
-      count: number;
-    }> = [
-      {
-        title: 'Antiqora Quantum Lab',
-        target: 'https://antiqora.io/quantum',
-        displayDomain: 'antiqora.io',
-        isUrl: true,
-        count: 14
-      },
-      {
-        title: 'ArXiv AI & Neural Papers',
-        target: 'https://arxiv.org/list/cs.AI/recent',
-        displayDomain: 'arxiv.org',
-        isUrl: true,
-        count: 11
-      },
-      {
-        title: 'GitHub Trending Repos',
-        target: 'https://github.com/trending',
-        displayDomain: 'github.com',
-        isUrl: true,
-        count: 9
-      },
-      {
-        title: 'Hacker News Tech Frontpage',
-        target: 'https://news.ycombinator.com',
-        displayDomain: 'ycombinator.com',
-        isUrl: true,
-        count: 7
-      },
-      {
-        title: 'TypeScript 7 Language Specs',
-        target: 'TypeScript 7 Language Specs',
-        displayDomain: 'Search Query',
-        isUrl: false,
-        count: 6
-      }
-    ];
-
-    if (groupedMap.size < 5) {
-      baselineVisits.forEach(seed => {
-        const key = seed.target.toLowerCase();
-        if (!groupedMap.has(key)) {
-          groupedMap.set(key, {
-            title: seed.title,
-            target: seed.target,
-            displayDomain: seed.displayDomain,
-            isUrl: seed.isUrl,
-            count: seed.count,
-            lastVisited: Date.now() - 3600000 * seed.count,
-          });
-        }
-      });
-    }
-
-    const formatTimeAgo = (ts: number): string => {
-      const diff = Date.now() - ts;
-      if (diff < 60000) return 'Just now';
-      if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-      if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-      return `${Math.floor(diff / 86400000)}d ago`;
     };
 
-    return Array.from(groupedMap.entries())
-      .map(([id, data]) => ({
-        id,
-        title: data.title,
-        target: data.target,
-        displayDomain: data.displayDomain,
-        isUrl: data.isUrl,
-        count: data.count,
-        lastVisited: data.lastVisited,
-        formattedTime: formatTimeAgo(data.lastVisited),
-      }))
-      .sort((a, b) => b.count - a.count || b.lastVisited - a.lastVisited)
-      .slice(0, 5);
-  }, [historyItems, recentSearches, usageTick]);
-
-  // Discover Categories Data
-  const discoverCategories = [
-    { id: 'all', name: 'All Topics', icon: Compass },
-    { id: 'engineering', name: 'Electrical & Power', icon: Zap },
-    { id: 'ai', name: 'AI & Quantum', icon: Cpu },
-    { id: 'trending', name: 'Trending Now', icon: TrendingUp },
-    { id: 'tools', name: 'AI Tools', icon: Bot },
-  ] as const;
-
-  const discoverItems = [
-    {
-      title: "EV Powertrain Inverter Physics",
-      category: "engineering",
-      description: "SiC MOSFET high-frequency switching & thermal dissipation models.",
-      query: "EV Powertrain Inverter Physics SiC MOSFET",
-      badge: "Electrical",
-      icon: Zap
-    },
-    {
-      title: "Solid-State Battery Electrolytes",
-      category: "engineering",
-      description: "Sulfide vs Oxide solid electrolyte conductivity benchmarks.",
-      query: "Solid-State Battery Electrolytes Sulfide Oxide",
-      badge: "Power",
-      icon: Activity
-    },
-    {
-      title: "MATLAB Simulink Grid Topologies",
-      category: "engineering",
-      description: "Microgrid islanding detection and droop control algorithms.",
-      query: "MATLAB Simulink Microgrid Droop Control",
-      badge: "Simulink",
-      icon: Code2
-    },
-    {
-      title: "Quantum Supremacy & Qubit Coherence",
-      category: "ai",
-      description: "Superconducting vs Ion-trap fidelity and error correction in 2026.",
-      query: "Quantum Supremacy Qubit Coherence Error Correction",
-      badge: "Quantum",
-      icon: Cpu
-    },
-    {
-      title: "TypeScript 7 Type-Level Metaprogramming",
-      category: "ai",
-      description: "Zero-cost type abstractions and native WebAssembly compilation.",
-      query: "TypeScript 7 Type Level Metaprogramming WebAssembly",
-      badge: "Language",
-      icon: Terminal
-    },
-    {
-      title: "Neural Inverted Index & BM25 Scoring",
-      category: "ai",
-      description: "Hybrid vector search + lexical Okapi BM25 ranking architecture.",
-      query: "Neural Inverted Index BM25 Hybrid Search",
-      badge: "Search Engine",
-      icon: Layers
-    },
-    {
-      title: "Autonomous Energy Microgrids 2026",
-      category: "trending",
-      description: "AI-driven peer-to-peer energy trade and load balancing.",
-      query: "Autonomous Energy Microgrids P2P Grid",
-      badge: "Energy",
-      icon: TrendingUp
-    },
-    {
-      title: "SpaceX Starship Telemetry Data",
-      category: "trending",
-      description: "Raptor engine chamber pressure and thermal protection systems.",
-      query: "SpaceX Starship Telemetry Raptor Engine",
-      badge: "Aerospace",
-      icon: Globe2
-    },
-    {
-      title: "AI Paper Abstract Summarizer",
-      category: "tools",
-      description: "Synthesize arXiv quantum physics and ML papers into 3D diagrams.",
-      query: "AI Paper Abstract Summarizer Quantum Physics",
-      badge: "Tool",
-      icon: BookOpen
-    },
-    {
-      title: "3D System Dynamics Visualizer",
-      category: "tools",
-      description: "Interactive timeline & scenario projection engine.",
-      query: "3D System Dynamics Visualizer Future Scenarios",
-      badge: "Interactive",
-      icon: Sparkles
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          fetchWeather(pos.coords.latitude, pos.coords.longitude);
+        },
+        () => {
+          fetchWeather(); // Fallback to IP / server location
+        },
+        { timeout: 5000 }
+      );
+    } else {
+      fetchWeather();
     }
-  ];
 
-  // Global Keyboard Shortcuts (Ctrl+K or / to focus search)
+    return () => { isMounted = false; };
+  }, []);
+
+  // Fetch Real Trending Searches from Backend (Google Trends RSS)
+  useEffect(() => {
+    let isMounted = true;
+    fetch('/api/trending')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.available && Array.isArray(data.trends) && data.trends.length > 0 && isMounted) {
+          setTrendingList(data.trends);
+        }
+      })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, []);
+
+  // Fetch Real Breaking News from Backend
+  useEffect(() => {
+    let isMounted = true;
+    fetch('/api/news?category=all')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.results && Array.isArray(data.results) && data.results.length > 0 && isMounted) {
+          setNewsList(data.results.slice(0, 3));
+        }
+      })
+      .catch(() => {});
+    return () => { isMounted = false; };
+  }, []);
+
+  // Keyboard Shortcuts (Ctrl+K or / to focus search box)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
@@ -393,7 +191,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Click outside listener to dismiss suggestions
+  // Dismiss suggestions dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
@@ -408,7 +206,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     };
   }, []);
 
-  // Debounced server autocomplete fetch on query change
+  // Debounced server autocomplete
   useEffect(() => {
     const trimmed = query.trim();
     setSelectedIndex(-1);
@@ -436,26 +234,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const target = targetQuery.trim();
     if (!target) return;
 
-    // Record in internal usage counter
     trendingSearchesService.recordQueryUsage(target);
-
-    setIsSubmitting(true);
     setShowSuggestions(false);
-
-    // Subtle 200ms submission transition
-    setTimeout(() => {
-      setIsSubmitting(false);
-      onSearch(target, overrideTab || (isAiMode ? 'ai' : 'all'));
-    }, 200);
-  };
-
-  const handleVisitedItemClick = (item: { target: string; isUrl: boolean }) => {
-    if (item.isUrl) {
-      onSearch(item.target, 'all');
-    } else {
-      setQuery(item.target);
-      handleSearchSubmit(item.target);
-    }
+    onSearch(target, overrideTab || 'all');
   };
 
   const handleKeyDownInInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -473,14 +254,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
       } else if (suggestions.length > 0) {
         setSelectedIndex(prev => (prev > 0 ? prev - 1 : suggestions.length - 1));
       }
-    } else if (e.key === 'Tab') {
-      if (showSuggestions && suggestions.length > 0) {
-        e.preventDefault();
-        const target = selectedIndex >= 0 && selectedIndex < suggestions.length
-          ? suggestions[selectedIndex].text
-          : suggestions[0].text;
-        setQuery(target);
-      }
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (showSuggestions && selectedIndex >= 0 && selectedIndex < suggestions.length) {
@@ -497,118 +270,72 @@ export const HomeView: React.FC<HomeViewProps> = ({
     }
   };
 
-  const filteredDiscoverItems = activeDiscoverCategory === 'all'
-    ? discoverItems
-    : discoverItems.filter(item => item.category === activeDiscoverCategory);
-
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: 'easeOut' }}
-      className="relative min-h-[calc(100vh-4rem)] flex flex-col items-center justify-between px-4 py-6 sm:px-6 md:px-8 max-w-6xl mx-auto"
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+      className="relative min-h-[calc(100vh-3.5rem)] flex flex-col justify-between px-4 py-4 sm:px-6 md:px-8 max-w-5xl mx-auto text-slate-900 dark:text-slate-100"
     >
-      {/* Background Subtle Particle & Mesh Layer */}
-      <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none select-none">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[350px] bg-gradient-to-tr from-cyan-500/10 via-indigo-500/10 to-purple-500/10 blur-[100px] rounded-full" />
-        <div className="absolute inset-0 bg-[linear-gradient(to_right,#0f172a08_1px,transparent_1px),linear-gradient(to_bottom,#0f172a08_1px,transparent_1px)] dark:bg-[linear-gradient(to_right,#1e293b15_1px,transparent_1px),linear-gradient(to_bottom,#1e293b15_1px,transparent_1px)] bg-[size:24px_24px]" />
-      </div>
-
-      {/* Top Bar: Quick Theme, Mode & Settings */}
-      <div className="w-full flex items-center justify-between gap-3 mb-6 sm:mb-8">
+      
+      {/* 1. TOP BAR */}
+      <header className="w-full flex items-center justify-between gap-4 py-2 border-b border-slate-200/60 dark:border-slate-800/60">
         
-        {/* Left Status Pill */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-cyan-500/20 bg-cyan-500/5 dark:bg-slate-900/60 text-[11px] font-mono text-cyan-600 dark:text-cyan-400 backdrop-blur-md">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="font-semibold">ANTIQORA Online</span>
+        {/* Left: Compact Hamburger / Menu + Antiqora Wordmark */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onOpenMobileMenu}
+            className="p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+            title="Open Menu"
+            aria-label="Open Navigation Menu"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+
+          <div 
+            onClick={() => { setQuery(''); searchInputRef.current?.focus(); }}
+            className="cursor-pointer select-none"
+          >
+            <Logo size="sm" showTagline={false} />
           </div>
         </div>
 
-        {/* Right Action Controls */}
+        {/* Right: Account / Profile Button */}
         <div className="flex items-center gap-2">
-          {/* Settings Trigger */}
-          <button
-            onClick={onOpenSettings}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-200/80 dark:bg-slate-900/80 border border-slate-300 dark:border-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-cyan-500 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition shadow-xs"
-            title="Browser Settings"
-            aria-label="Settings"
-          >
-            <Settings className="w-4 h-4" />
-            <span className="hidden sm:inline">Settings</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main Center Search Hero Section */}
-      <div className="w-full max-w-3xl my-auto flex flex-col items-center text-center">
-        
-        {/* ANTIQORA Logo with Subtle Hover Glow & Tap Micro-interaction */}
-        <motion.div 
-          whileHover={{ scale: 1.015 }}
-          whileTap={{ scale: 0.98 }}
-          transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-          className="mb-7 cursor-pointer select-none"
-          onClick={() => {
-            setQuery('');
-            searchInputRef.current?.focus();
-          }}
-        >
-          <Logo size="xl" showTagline={true} />
-        </motion.div>
-
-        {/* AI Search Mode Toggle Bar */}
-        <div className="mb-3 flex items-center gap-2 p-1 rounded-2xl bg-slate-200/60 dark:bg-slate-900/70 border border-slate-300/80 dark:border-slate-800/80 backdrop-blur-md text-xs">
           <button
             type="button"
-            onClick={() => setIsAiMode(false)}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-semibold transition ${
-              !isAiMode
-                ? 'bg-white dark:bg-slate-800 text-cyan-600 dark:text-cyan-400 shadow-sm'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-            }`}
+            onClick={onOpenAuth}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:border-cyan-500/50 hover:bg-cyan-500/5 text-xs font-semibold text-slate-700 dark:text-slate-200 transition shadow-2xs"
+            aria-label="Account Profile"
           >
-            <Search className="w-3.5 h-3.5" />
-            <span>Standard Web</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setIsAiMode(true)}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl font-semibold transition ${
-              isAiMode
-                ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-slate-950 font-bold shadow-md shadow-cyan-500/20'
-                : 'text-slate-600 dark:text-slate-400 hover:text-cyan-500 dark:hover:text-cyan-400'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>AI Neural Mode</span>
-          </button>
-        </div>
-
-        {/* Central Search Input Card */}
-        <div ref={searchContainerRef} className="w-full relative group mb-6 text-left">
-          {/* Animated Glow Border Frame */}
-          <div 
-            className={`absolute -inset-1 rounded-3xl bg-gradient-to-r ${
-              isAiMode 
-                ? 'from-purple-500 via-indigo-500 to-cyan-400 opacity-40 group-hover:opacity-70 blur-xl animate-pulse' 
-                : 'from-cyan-500 via-indigo-500 to-purple-500 opacity-20 group-hover:opacity-40 blur-xl'
-            } transition duration-500`} 
-          />
-
-          <div className="relative flex items-center rounded-2xl border border-slate-300 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl px-4 py-3 sm:py-4 shadow-xl dark:shadow-2xl">
-            
-            {/* Animated Search Icon */}
-            {isSubmitting ? (
-              <RefreshCw className="w-5 h-5 text-cyan-500 animate-spin mr-3 flex-shrink-0" />
-            ) : isAiMode ? (
-              <Sparkles className="w-5 h-5 text-purple-500 dark:text-purple-400 animate-pulse mr-3 flex-shrink-0" />
+            {user?.avatar ? (
+              <img src={user.avatar} alt={user.name} className="w-5 h-5 rounded-full object-cover" />
             ) : (
-              <Search className="w-5 h-5 text-cyan-600 dark:text-cyan-400 mr-3 flex-shrink-0" />
+              <User className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
             )}
+            <span className="hidden sm:inline font-medium">{user?.name || "Sign In"}</span>
+          </button>
+        </div>
+      </header>
 
-            {/* Input Element */}
+      {/* MAIN CONTENT WRAPPER */}
+      <div className="flex-1 flex flex-col items-center justify-center my-auto py-8 sm:py-12 w-full">
+
+        {/* ANTIQORA Logo Hero */}
+        <div className="mb-6 text-center select-none">
+          <Logo size="xl" showTagline={true} />
+        </div>
+
+        {/* 2. MAIN SEARCH AREA */}
+        <div ref={searchContainerRef} className="w-full max-w-2xl relative mb-4">
+          
+          <div className="relative flex items-center rounded-2xl border border-slate-300/90 dark:border-slate-700/80 bg-white dark:bg-slate-900 shadow-lg dark:shadow-2xl px-4 py-3 sm:py-3.5 transition-all focus-within:border-cyan-500 focus-within:ring-2 focus-within:ring-cyan-500/20">
+            
+            {/* Search Icon */}
+            <Search className="w-5 h-5 text-cyan-600 dark:text-cyan-400 mr-3 shrink-0" />
+
+            {/* Input Field */}
             <input
               ref={searchInputRef}
               id="antiqora-main-search"
@@ -620,66 +347,58 @@ export const HomeView: React.FC<HomeViewProps> = ({
               }}
               onKeyDown={handleKeyDownInInput}
               onFocus={() => setShowSuggestions(true)}
-              placeholder={
-                isAiMode
-                  ? "Ask ANTIQORA AI anything... (Neural Synthesis Mode)"
-                  : "Search anything with ANTIQORA... (Press '/' or Ctrl+K)"
-              }
+              placeholder="Search anything..."
               className="w-full bg-transparent text-base sm:text-lg text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none"
               autoFocus
-              aria-label="Search query"
+              aria-label="Search anything"
               autoComplete="off"
             />
 
-            {/* Keyboard Shortcut Hint */}
-            <div className="hidden sm:flex items-center gap-1 mr-2 pointer-events-none select-none flex-shrink-0">
-              <kbd className="inline-flex items-center px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-100/90 dark:bg-slate-800/80 text-[11px] font-mono text-slate-500 dark:text-slate-400 shadow-xs">
-                {typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl+K'}
-              </kbd>
-            </div>
-
+            {/* Clear Text Button */}
             {query && (
               <button
+                type="button"
                 onClick={() => {
                   setQuery('');
                   setServerSuggestions([]);
                   setShowSuggestions(true);
                   searchInputRef.current?.focus();
                 }}
-                className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition mr-1"
-                aria-label="Clear query"
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition mr-1"
+                aria-label="Clear Search Input"
               >
                 <X className="w-4 h-4" />
               </button>
             )}
 
-            {/* Quick Modality Buttons */}
-            <div className="flex items-center gap-1 sm:gap-1.5 ml-2 flex-shrink-0">
+            {/* Microphone & Lens Icons Inside Search Box */}
+            <div className="flex items-center gap-1 shrink-0 ml-2">
               
-              {/* Visual Search Modal Button */}
-              {onOpenVisual && (
-                <button
-                  type="button"
-                  onClick={onOpenVisual}
-                  className="p-2 sm:p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                  title="Analyze Visual / Camera Input"
-                  aria-label="Visual Search"
-                >
-                  <ScanQrCode className="w-5 h-5" />
-                </button>
-              )}
-
-              {/* Voice Search Button */}
+              {/* Voice / Microphone Search Button */}
               <button
                 type="button"
                 onClick={onOpenVoice}
-                className="p-2 sm:p-2.5 rounded-xl text-slate-500 dark:text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                title="Voice Search"
+                className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                title="Search with Voice"
                 aria-label="Voice Search"
               >
                 <Mic className="w-5 h-5" />
               </button>
+
+              {/* Visual Search / Lens Button */}
+              {onOpenVisual && (
+                <button
+                  type="button"
+                  onClick={onOpenVisual}
+                  className="p-2 rounded-xl text-slate-500 dark:text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                  title="Search with Lens (Visual Scanner)"
+                  aria-label="Visual Search Lens"
+                >
+                  <Camera className="w-5 h-5" />
+                </button>
+              )}
             </div>
+
           </div>
 
           {/* Real-time Search Suggestions Dropdown */}
@@ -703,299 +422,180 @@ export const HomeView: React.FC<HomeViewProps> = ({
           />
         </div>
 
-        {/* Quick App & Platform Search Chips */}
-        <div className="mt-3.5 mb-1.5 flex flex-wrap items-center justify-center gap-1.5 text-xs">
-          <span className="text-slate-500 dark:text-slate-400 text-[11px] font-semibold flex items-center gap-1 mr-1">
-            <Smartphone className="w-3.5 h-3.5 text-indigo-500" />
-            <span>Universal App Search:</span>
-          </span>
-          {[
-            { label: 'PhonePe UPI', q: 'phonepe' },
-            { label: 'Google Pay', q: 'google pay' },
-            { label: 'Zomato Food', q: 'zomato' },
-            { label: 'Swiggy', q: 'swiggy' },
-            { label: 'Blinkit Grocery', q: 'blinkit' },
-            { label: 'Canva Designer', q: 'canva' },
-            { label: 'ChatGPT AI', q: 'chatgpt' },
-            { label: 'DigiLocker', q: 'digilocker' },
-            { label: 'IRCTC Train', q: 'irctc' },
-            { label: 'Spotify', q: 'spotify' }
-          ].map((chip, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => {
-                setQuery(chip.q);
-                onSearch(chip.q, 'apps');
-              }}
-              className="px-2.5 py-1 rounded-lg bg-white/80 dark:bg-slate-800/80 hover:bg-indigo-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition text-[11px] font-medium flex items-center gap-1 border border-slate-200/80 dark:border-slate-700/80 hover:border-indigo-400 dark:hover:border-indigo-500 shadow-2xs"
-            >
-              <span>{chip.label}</span>
-            </button>
-          ))}
+        {/* 3. QUICK SEARCH / DISCOVERY */}
+        <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 mb-8">
+          <button
+            type="button"
+            onClick={() => handleSearchSubmit(query || 'AI Overview', 'ai')}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:border-cyan-500/50 hover:text-cyan-600 dark:hover:text-cyan-400 transition shadow-2xs"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-500" />
+            <span>AI Search</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSearchSubmit(query || 'High Resolution Images', 'images')}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:border-cyan-500/50 hover:text-cyan-600 dark:hover:text-cyan-400 transition shadow-2xs"
+          >
+            <ImageIcon className="w-3.5 h-3.5 text-cyan-500" />
+            <span>Images</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSearchSubmit(query || 'Breaking News', 'news')}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:border-cyan-500/50 hover:text-cyan-600 dark:hover:text-cyan-400 transition shadow-2xs"
+          >
+            <Newspaper className="w-3.5 h-3.5 text-emerald-500" />
+            <span>News</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleSearchSubmit(query || 'Trending Videos', 'videos')}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:border-cyan-500/50 hover:text-cyan-600 dark:hover:text-cyan-400 transition shadow-2xs"
+          >
+            <Video className="w-3.5 h-3.5 text-rose-500" />
+            <span>Videos</span>
+          </button>
         </div>
 
-        {/* Selected Image Preview Pill */}
-        {selectedImageFile && (
-          <div className="mb-6 flex items-center gap-3 rounded-2xl border border-cyan-500/30 bg-cyan-500/5 dark:bg-slate-900/80 p-3 shadow-md">
-            <img src={selectedImageFile} alt="Upload preview" className="w-12 h-12 rounded-xl object-cover border border-slate-300 dark:border-slate-700" />
-            <div className="text-left">
-              <p className="text-xs font-semibold text-cyan-600 dark:text-cyan-400">Visual Query Active</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Querying image similarity index...</p>
+        {/* 4. OPTIONAL PERSONALIZED DATA SECTIONS (Only shown when real data is available) */}
+        
+        {/* Real Weather Widget (Shown ONLY if weather data is returned) */}
+        {weather && (
+          <div className="w-full max-w-2xl mb-6 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/60 dark:bg-slate-900/50 backdrop-blur-md flex items-center justify-between text-xs text-slate-700 dark:text-slate-300 shadow-2xs">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500">
+                <CloudSun className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="font-bold text-slate-900 dark:text-slate-100">{weather.city}</p>
+                <p className="text-slate-500 text-[11px]">{weather.condition}</p>
+              </div>
             </div>
-            <button 
-              onClick={() => setSelectedImageFile(null)} 
-              className="ml-auto text-xs text-slate-400 hover:text-slate-700 dark:hover:text-white px-2 py-1"
-            >
-              Clear
-            </button>
+
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <span className="text-lg font-black text-cyan-600 dark:text-cyan-400">{weather.temperature}{weather.unit}</span>
+              </div>
+              <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-400 border-l border-slate-200 dark:border-slate-800 pl-3">
+                <span className="flex items-center gap-1"><Wind className="w-3 h-3 text-cyan-500" /> {weather.windSpeed} km/h</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 5. RECENT SEARCHES (Shown ONLY if user has search history) */}
+        {recentSearches.length > 0 && (
+          <div className="w-full max-w-2xl mb-6 text-left">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5 uppercase tracking-wider text-[11px]">
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                <span>Recent Searches</span>
+              </span>
+              <button
+                type="button"
+                onClick={onClearRecent}
+                className="text-[11px] text-slate-400 hover:text-rose-500 transition"
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {recentSearches.slice(0, 6).map((item, idx) => (
+                <div
+                  key={idx}
+                  className="inline-flex items-center rounded-xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/60 text-xs text-slate-700 dark:text-slate-300 hover:border-cyan-500/40 transition shadow-2xs"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery(item);
+                      handleSearchSubmit(item);
+                    }}
+                    className="px-3 py-1.5 font-medium hover:text-cyan-600 dark:hover:text-cyan-400 transition"
+                  >
+                    {item}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDeleteRecent(item)}
+                    className="pr-2 text-slate-400 hover:text-rose-500 transition"
+                    aria-label={`Remove ${item}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 6. REAL TRENDING SEARCHES (Shown ONLY when backend data is available) */}
+        {trendingList.length > 0 && (
+          <div className="w-full max-w-2xl mb-6 text-left">
+            <div className="flex items-center gap-1.5 mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[11px]">
+              <TrendingUp className="w-3.5 h-3.5 text-cyan-500" />
+              <span>Trending Now</span>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {trendingList.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    setQuery(t.query);
+                    handleSearchSubmit(t.query);
+                  }}
+                  className="px-3 py-1.5 rounded-xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/60 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-cyan-500/50 hover:text-cyan-600 dark:hover:text-cyan-400 transition shadow-2xs flex items-center gap-1.5"
+                >
+                  <span>{t.query}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Real News Cards (Shown ONLY if backend returns news) */}
+        {newsList.length > 0 && (
+          <div className="w-full max-w-2xl mt-2 text-left">
+            <div className="flex items-center gap-1.5 mb-2.5 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider text-[11px]">
+              <Newspaper className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Top Headlines</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {newsList.map((news) => (
+                <div
+                  key={news.id}
+                  onClick={() => handleSearchSubmit(news.title, 'news')}
+                  className="p-3 rounded-xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/60 hover:border-cyan-500/40 transition cursor-pointer shadow-2xs flex flex-col justify-between"
+                >
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400">{news.source}</span>
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 line-clamp-2 leading-snug">{news.title}</h4>
+                  </div>
+                  <div className="mt-2 text-[10px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-800">
+                    <span>{news.date}</span>
+                    <ArrowRight className="w-3 h-3 text-cyan-500" />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
       </div>
 
-      {/* RECENTLY VISITED SECTION (Top 5 Most Frequently Accessed URLs or Search Queries) */}
-      {recentlyVisitedItems.length > 0 && (
-        <div className="w-full max-w-4xl mt-3 mb-8 text-left">
-          <div className="flex items-center justify-between px-1 mb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-lg bg-cyan-500/10 dark:bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-500 dark:text-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.2)]">
-                <History className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />
-              </div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-xs font-mono font-bold tracking-wider uppercase text-slate-800 dark:text-slate-200">
-                  Recently Visited
-                </h3>
-                <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-mono font-semibold bg-cyan-500/10 text-cyan-600 dark:text-cyan-300 border border-cyan-500/25">
-                  <Activity className="w-2.5 h-2.5 text-cyan-400" />
-                  <span>Top 5 Frequency</span>
-                </span>
-              </div>
-            </div>
-            <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500">
-              From Browsing History
-            </span>
-          </div>
-
-          {/* 5 Clickable Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-            {recentlyVisitedItems.map((item, idx) => (
-              <motion.div
-                key={item.id || idx}
-                whileHover={{ y: -3, scale: 1.015 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => handleVisitedItemClick(item)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    handleVisitedItemClick(item);
-                  }
-                }}
-                className="group relative flex flex-col justify-between p-3.5 rounded-2xl bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border border-slate-200/80 dark:border-slate-800/80 hover:border-cyan-400/60 dark:hover:border-cyan-500/60 transition-all duration-200 shadow-xs hover:shadow-[0_0_20px_rgba(6,182,212,0.18)] cursor-pointer text-left overflow-hidden outline-hidden focus-visible:ring-2 focus-visible:ring-cyan-400"
-                aria-label={`Recently visited #${idx + 1}: ${item.title}`}
-              >
-                {/* Subtle futuristic gradient backdrop on hover */}
-                <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 via-indigo-500/5 to-transparent dark:from-cyan-950/20 dark:via-indigo-950/20 dark:to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-
-                <div>
-                  {/* Top Row: Favicon/Icon + Frequency Pill */}
-                  <div className="flex items-center justify-between gap-2 mb-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-center overflow-hidden shrink-0 shadow-2xs group-hover:border-cyan-500/40 transition-colors">
-                      {item.isUrl ? (
-                        <img
-                          src={`https://www.google.com/s2/favicons?domain=${item.displayDomain}&sz=64`}
-                          alt={item.displayDomain}
-                          className="w-4 h-4 object-contain"
-                          onError={(e) => {
-                            (e.currentTarget as HTMLElement).style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <Search className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />
-                      )}
-                    </div>
-
-                    <span className="inline-flex items-center gap-1 font-mono text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/25 shadow-[0_0_8px_rgba(6,182,212,0.1)]">
-                      <Flame className="w-2.5 h-2.5 text-cyan-500 fill-cyan-500/20" />
-                      <span>{item.count} {item.count === 1 ? 'visit' : 'visits'}</span>
-                    </span>
-                  </div>
-
-                  {/* Card Title */}
-                  <h4 className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate group-hover:text-cyan-500 dark:group-hover:text-cyan-300 transition-colors">
-                    {item.title}
-                  </h4>
-
-                  {/* Subtitle / Domain */}
-                  <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate flex items-center gap-1 mt-0.5">
-                    {item.isUrl ? (
-                      <>
-                        <Globe className="w-2.5 h-2.5 shrink-0 text-cyan-500/70" />
-                        <span className="truncate">{item.displayDomain}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Search className="w-2.5 h-2.5 shrink-0 text-slate-400" />
-                        <span className="truncate">Search Query</span>
-                      </>
-                    )}
-                  </p>
-                </div>
-
-                {/* Bottom Row: Last Visited Time + Launch Arrow */}
-                <div className="flex items-center justify-between pt-2.5 border-t border-slate-100 dark:border-slate-800/80 mt-3 text-[10px] font-mono text-slate-400 dark:text-slate-500">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-2.5 h-2.5 text-slate-400" />
-                    <span>{item.formattedTime}</span>
-                  </span>
-                  <div className="flex items-center gap-1 text-slate-400 group-hover:text-cyan-400 transition-colors">
-                    <span className="text-[9px] font-bold uppercase tracking-wider opacity-0 group-hover:opacity-100 transition-opacity">Launch</span>
-                    <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* DISCOVER HUB SECTION */}
-      <div className="w-full max-w-4xl mt-6 mb-10 text-left">
-        
-        {/* Discover Header & Category Pills */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-            <Compass className="w-4 h-4 text-cyan-500" />
-            <span>Discover Knowledge Channels</span>
-          </div>
-
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-            {discoverCategories.map((cat) => {
-              const IconComp = cat.icon;
-              const isActive = activeDiscoverCategory === cat.id;
-              return (
-                <button
-                  key={cat.id}
-                  onClick={() => setActiveDiscoverCategory(cat.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition ${
-                    isActive
-                      ? 'bg-cyan-500 text-slate-950 font-bold shadow-xs'
-                      : 'bg-slate-200/70 dark:bg-slate-900/60 text-slate-600 dark:text-slate-400 hover:bg-slate-300 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  <IconComp className="w-3.5 h-3.5" />
-                  <span>{cat.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Discover Grid Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filteredDiscoverItems.map((item, idx) => {
-            const ItemIcon = item.icon;
-            return (
-              <motion.div
-                key={idx}
-                whileHover={{ y: -2 }}
-                onClick={() => {
-                  setQuery(item.query);
-                  handleSearchSubmit(item.query);
-                }}
-                className="group p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-900/90 hover:border-cyan-500/40 transition cursor-pointer shadow-xs relative overflow-hidden flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 text-[10px] font-bold uppercase tracking-wider">
-                      {item.badge}
-                    </span>
-                    <ItemIcon className="w-4 h-4 text-slate-400 group-hover:text-cyan-500 transition" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100 group-hover:text-cyan-500 transition line-clamp-1">
-                    {item.title}
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 line-clamp-2">
-                    {item.description}
-                  </p>
-                </div>
-
-                <div className="mt-3 pt-2 border-t border-slate-100 dark:border-slate-800/50 flex items-center justify-between text-[11px] text-cyan-600 dark:text-cyan-400 font-medium">
-                  <span>Explore Topic</span>
-                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition" />
-                </div>
-              </motion.div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* PERSONALIZED & PRIVATE RECENT SEARCHES */}
-      {recentSearches.length > 0 && (
-        <div className="w-full max-w-4xl mb-8 text-left">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              <Clock className="w-4 h-4 text-amber-500" />
-              <span>Recent Search History</span>
-            </div>
-            <button 
-              onClick={onClearRecent} 
-              className="text-xs text-slate-500 hover:text-rose-500 dark:hover:text-rose-400 transition"
-            >
-              Clear history
-            </button>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {recentSearches.map((item, idx) => (
-              <div
-                key={idx}
-                className="group flex items-center rounded-xl border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/40 text-xs text-slate-700 dark:text-slate-300 hover:border-cyan-500/40 transition shadow-xs"
-              >
-                <button
-                  onClick={() => {
-                    setQuery(item);
-                    handleSearchSubmit(item);
-                  }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 font-medium hover:text-cyan-500 transition"
-                >
-                  <Clock className="w-3 h-3 text-slate-400" />
-                  <span>{item}</span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteRecent(item);
-                  }}
-                  className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-slate-200/50 dark:hover:bg-slate-800 rounded-r-xl transition"
-                  title="Remove from history"
-                  aria-label={`Remove ${item} from history`}
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* TRUST & LOCAL PRIVACY FOOTER BADGES */}
-      <div className="w-full max-w-2xl pt-6 border-t border-slate-200 dark:border-slate-900 flex flex-wrap items-center justify-center gap-6 text-xs text-slate-500 dark:text-slate-400">
-        <div className="flex items-center gap-1.5">
-          <ShieldCheck className="w-4 h-4 text-cyan-500 dark:text-cyan-400" />
-          <span>Local Privacy Guard (Zero External Tracking)</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Globe2 className="w-4 h-4 text-indigo-500 dark:text-indigo-400" />
-          <span>Real-Time Web Search Proxy</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Sparkles className="w-4 h-4 text-purple-500 dark:text-purple-400" />
-          <span>ANTIQORA Neural Search Core</span>
-        </div>
-      </div>
+      {/* FOOTER */}
+      <footer className="w-full py-3 border-t border-slate-200/60 dark:border-slate-800/60 text-center text-[11px] text-slate-500 dark:text-slate-400 flex items-center justify-center gap-2">
+        <ShieldCheck className="w-3.5 h-3.5 text-cyan-500" />
+        <span>Antiqora Search • Privacy First Engine</span>
+      </footer>
 
     </motion.div>
   );

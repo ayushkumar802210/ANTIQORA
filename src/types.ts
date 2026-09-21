@@ -35,6 +35,9 @@ export interface UserProfile {
   name: string;
   email: string;
   avatar?: string;
+  bio?: string;
+  phone?: string;
+  location?: string;
   isLoggedIn: boolean;
 }
 
@@ -79,6 +82,7 @@ export interface BrowserTab {
   timelineEvents?: any[];
   futureScenarios?: any[];
   intentResult?: any | null;
+  personEntity?: any | null;
   websitesResults?: any[];
   appsResults?: any[];
   isSearchLoading?: boolean;
