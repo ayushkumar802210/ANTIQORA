@@ -17,7 +17,19 @@ import {
   ALL_APP_CATEGORIES 
 } from "./src/services/app-discovery";
 import { findBhojpuriActor, isBhojpuriQuery, BHOJPURI_ACTORS } from "./src/services/bhojpuriDatabase";
+import { 
+  findRegionalChannel, 
+  isRegionalMusicQuery, 
+  searchRegionalContent, 
+  REGIONAL_CHANNELS 
+} from "./src/services/regionalChannelsDatabase";
+import { findReporter, isReporterQuery, REPORTERS_DATABASE } from "./src/services/reporterDatabase";
 import { entityAggregatorService } from "./src/services/entityResolution/EntityAggregatorService";
+import { SafetyAndIntentClassifier } from "./src/services/safety/SafetyAndIntentClassifier";
+import { VideoValidator, VideoCandidate } from "./src/services/videoValidator";
+import { videoSearchOrchestrator } from "./src/services/VideoSearchOrchestrator";
+import { searchImages } from "./lib/images";
+import { handleSearchRequest } from "./app/api/search/route";
 
 dotenv.config();
 
@@ -315,42 +327,181 @@ async function startServer() {
   // Universal Multi-Source Search Helpers (Google Grounding, Wikipedia, OSM, DDG)
   // ============================================================================
 
-  // Detect if query is in Hindi / Devanagari script
-  function isHindiScript(text: string): boolean {
-    return /[\u0900-\u097F]/.test(text);
+  // ============================================================================
+  // Universal Multi-Lingual & Multi-Source Helpers (Language & Script Detection, Wikipedia, OSM)
+  // ============================================================================
+
+  interface DetectedLangInfo {
+    code: string;
+    name: string;
+    nativeName: string;
+    isEnglish: boolean;
+    isHinglish: boolean;
   }
 
-  // Multi-source live Wikipedia Search
-  async function fetchWikipediaResults(query: string, limit: number = 4) {
-    const isHindi = isHindiScript(query);
-    const lang = isHindi ? 'hi' : 'en';
-    const results: Array<{ id: string; title: string; url: string; domain: string; snippet: string; category: string; date: string; verification: string }> = [];
+  // Detect script and language of any query across Indian and Global languages
+  function detectQueryLanguage(text: string): DetectedLangInfo {
+    const trimmed = (text || '').trim();
+    if (!trimmed) {
+      return { code: 'en', name: 'English', nativeName: 'English', isEnglish: true, isHinglish: false };
+    }
 
-    try {
-      const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&format=json&srsearch=${encodeURIComponent(query)}&utf8=1&origin=*`;
-      const res = await fetch(searchUrl, {
-        headers: { 'User-Agent': 'ANTIQORA-SearchEngine/2.0 (search@antiqora.io)' }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const searchHits = data?.query?.search || [];
-        
-        for (const hit of searchHits.slice(0, limit)) {
-          const cleanSnippet = (hit.snippet || '').replace(/<[^>]*>?/gm, '').trim();
-          results.push({
-            id: `wiki-${hit.pageid || Math.random().toString(36).substring(2, 9)}`,
-            title: hit.title,
-            url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(hit.title.replace(/\s+/g, '_'))}`,
-            domain: `${lang}.wikipedia.org`,
-            snippet: cleanSnippet || `Encyclopedic knowledge and verified overview for ${hit.title}.`,
-            category: 'encyclopedia',
-            date: 'Live Knowledge Base',
-            verification: 'verified'
-          });
+    // Devanagari script: Hindi, Marathi, Nepali, Sanskrit, Bhojpuri
+    if (/[\u0900-\u097F]/.test(trimmed)) {
+      return { code: 'hi', name: 'Hindi', nativeName: 'हिन्दी', isEnglish: false, isHinglish: false };
+    }
+    // Bengali & Assamese script
+    if (/[\u0980-\u09FF]/.test(trimmed)) {
+      return { code: 'bn', name: 'Bengali', nativeName: 'বাংলা', isEnglish: false, isHinglish: false };
+    }
+    // Tamil script
+    if (/[\u0B80-\u0BFF]/.test(trimmed)) {
+      return { code: 'ta', name: 'Tamil', nativeName: 'தமிழ்', isEnglish: false, isHinglish: false };
+    }
+    // Telugu script
+    if (/[\u0C00-\u0C7F]/.test(trimmed)) {
+      return { code: 'te', name: 'Telugu', nativeName: 'తెలుగు', isEnglish: false, isHinglish: false };
+    }
+    // Kannada script
+    if (/[\u0C80-\u0CFF]/.test(trimmed)) {
+      return { code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ', isEnglish: false, isHinglish: false };
+    }
+    // Malayalam script
+    if (/[\u0D00-\u0D7F]/.test(trimmed)) {
+      return { code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം', isEnglish: false, isHinglish: false };
+    }
+    // Gujarati script
+    if (/[\u0A80-\u0AFF]/.test(trimmed)) {
+      return { code: 'gu', name: 'Gujarati', nativeName: 'ગુજરાતી', isEnglish: false, isHinglish: false };
+    }
+    // Gurmukhi script (Punjabi)
+    if (/[\u0A00-\u0A7F]/.test(trimmed)) {
+      return { code: 'pa', name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ', isEnglish: false, isHinglish: false };
+    }
+    // Odia script
+    if (/[\u0B00-\u0B7F]/.test(trimmed)) {
+      return { code: 'or', name: 'Odia', nativeName: 'ଓଡ଼ିଆ', isEnglish: false, isHinglish: false };
+    }
+    // Arabic / Urdu script
+    if (/[\u0600-\u06FF\u0750-\u077F]/.test(trimmed)) {
+      return { code: 'ar', name: 'Arabic / Urdu', nativeName: 'العربية / اردو', isEnglish: false, isHinglish: false };
+    }
+    // Cyrillic script (Russian, Ukrainian)
+    if (/[\u0400-\u04FF]/.test(trimmed)) {
+      return { code: 'ru', name: 'Russian', nativeName: 'Русский', isEnglish: false, isHinglish: false };
+    }
+    // Japanese (Hiragana / Katakana / Kanji)
+    if (/[\u3040-\u309F\u30A0-\u30FF]/.test(trimmed)) {
+      return { code: 'ja', name: 'Japanese', nativeName: '日本語', isEnglish: false, isHinglish: false };
+    }
+    // Korean Hangul
+    if (/[\uAC00-\uD7AF\u1100-\u11FF]/.test(trimmed)) {
+      return { code: 'ko', name: 'Korean', nativeName: '한국어', isEnglish: false, isHinglish: false };
+    }
+    // Chinese Hanzi
+    if (/[\u4E00-\u9FFF]/.test(trimmed)) {
+      return { code: 'zh', name: 'Chinese', nativeName: '中文', isEnglish: false, isHinglish: false };
+    }
+    // Greek
+    if (/[\u0370-\u03FF]/.test(trimmed)) {
+      return { code: 'el', name: 'Greek', nativeName: 'Ελληνικά', isEnglish: false, isHinglish: false };
+    }
+    // Hebrew
+    if (/[\u0590-\u05FF]/.test(trimmed)) {
+      return { code: 'he', name: 'Hebrew', nativeName: 'עברית', isEnglish: false, isHinglish: false };
+    }
+    // Thai
+    if (/[\u0E00-\u0E7F]/.test(trimmed)) {
+      return { code: 'th', name: 'Thai', nativeName: 'ไทย', isEnglish: false, isHinglish: false };
+    }
+
+    const lower = trimmed.toLowerCase();
+
+    // Check for Hinglish (Romanized Hindi) patterns
+    const hinglishMarkers = [
+      'kya', 'kaise', 'kyu', 'kyun', 'kab', 'kahan', 'kisko', 'kisne', 'chahiye', 
+      'hota', 'hoti', 'hote', 'hai', 'hain', 'tha', 'thi', 'the', 'kare', 'karein',
+      'karna', 'karo', 'batao', 'samjhao', 'dikhao', 'jaanna', 'accha', 'achha',
+      'bahut', 'zyada', 'kam', 'tarika', 'upay', 'itna', 'kitna', 'nahi', 'mein', 'wale'
+    ];
+    const words = lower.split(/\s+/);
+    const hasHinglish = words.some(w => hinglishMarkers.includes(w.replace(/[^a-z]/g, '')));
+    if (hasHinglish) {
+      return { code: 'hi-Latn', name: 'Hinglish', nativeName: 'हिंग्लिश (Roman Hindi)', isEnglish: false, isHinglish: true };
+    }
+
+    // Spanish markers
+    if (/¿|¡|\b(qué|como|cómo|donde|dónde|por qué|porque|para|cuál|quién|cuándo)\b/i.test(lower)) {
+      return { code: 'es', name: 'Spanish', nativeName: 'Español', isEnglish: false, isHinglish: false };
+    }
+    // French markers
+    if (/\b(qu'est-ce|pourquoi|comment|dans|avec|lequel|combien|c'est)\b/i.test(lower)) {
+      return { code: 'fr', name: 'French', nativeName: 'Français', isEnglish: false, isHinglish: false };
+    }
+    // German markers
+    if (/\b(was ist|wie|warum|welche|wann|wo|der|die|das|und)\b/i.test(lower)) {
+      return { code: 'de', name: 'German', nativeName: 'Deutsch', isEnglish: false, isHinglish: false };
+    }
+
+    return { code: 'en', name: 'English', nativeName: 'English', isEnglish: true, isHinglish: false };
+  }
+
+  // Multi-source live Wikipedia Search supporting all languages & scripts
+  async function fetchWikipediaResults(query: string, limit: number = 4) {
+    const langInfo = detectQueryLanguage(query);
+    const results: Array<{ id: string; title: string; url: string; domain: string; snippet: string; category: string; date: string; verification: string }> = [];
+    const seenTitles = new Set<string>();
+
+    // If query is Hinglish, strip out common question words to search the core topic
+    let cleanedTopic = query;
+    if (langInfo.isHinglish) {
+      cleanedTopic = query
+        .replace(/\b(kya|kaise|kyu|kyun|kab|kahan|hota|hoti|hote|hai|hain|kare|karein|karna|karo|batao|samjhao|dikhao|in hindi|ke bare me|ka matlab|kise kehte hai)\b/gi, '')
+        .trim();
+      if (!cleanedTopic) cleanedTopic = query;
+    }
+
+    const languagesToQuery: string[] = [];
+    const primaryCode = langInfo.code.split('-')[0];
+    if (primaryCode && primaryCode !== 'en') {
+      languagesToQuery.push(primaryCode);
+    }
+    languagesToQuery.push('en');
+
+    for (const lang of languagesToQuery) {
+      if (results.length >= limit) break;
+      const targetQuery = lang === 'en' ? cleanedTopic : query;
+      try {
+        const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&format=json&srsearch=${encodeURIComponent(targetQuery)}&utf8=1&origin=*`;
+        const res = await fetch(searchUrl, {
+          headers: { 'User-Agent': 'ANTIQORA-SearchEngine/2.0 (search@antiqora.io)' }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const searchHits = data?.query?.search || [];
+          
+          for (const hit of searchHits.slice(0, Math.ceil(limit / languagesToQuery.length) + 1)) {
+            if (results.length >= limit) break;
+            const normTitle = (hit.title || '').toLowerCase();
+            if (seenTitles.has(normTitle)) continue;
+            seenTitles.add(normTitle);
+
+            const cleanSnippet = (hit.snippet || '').replace(/<[^>]*>?/gm, '').trim();
+            results.push({
+              id: `wiki-${lang}-${hit.pageid || Math.random().toString(36).substring(2, 9)}`,
+              title: hit.title,
+              url: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(hit.title.replace(/\s+/g, '_'))}`,
+              domain: `${lang}.wikipedia.org`,
+              snippet: cleanSnippet || `Encyclopedic knowledge and verified overview for ${hit.title}.`,
+              category: 'encyclopedia',
+              date: `${lang.toUpperCase()} Verified Source`,
+              verification: 'verified'
+            });
+          }
         }
+      } catch (e) {
+        console.warn(`Wikipedia live search (${lang}) fallback:`, e);
       }
-    } catch (e) {
-      console.warn("Wikipedia live search fallback:", e);
     }
 
     return results;
@@ -394,16 +545,31 @@ async function startServer() {
   }
 
   // Google Search Grounding with Gemini fallback models & quota handling
-  async function fetchGeminiSearchGrounding(query: string) {
-    const results: Array<{ id: string; title: string; url: string; domain: string; snippet: string; category: string; date: string; verification: string }> = [];
+  async function fetchGeminiSearchGrounding(query: string, classification?: any, safeSearch: string = 'strict') {
+    const results: Array<{ id: string; title: string; url: string; domain: string; snippet: string; category: string; date: string; verification: string; isAdult?: boolean; rating?: string }> = [];
     let summary = "";
+
+    let promptContents = `Provide direct, accurate real-time web search information and key facts for: "${query}". Include relevant web citations.`;
+    if (classification?.isRomantic) {
+      promptContents = `Provide real-time comprehensive web search results, top movies, songs, articles, and relationship resources with valid website links for romantic query: "${query}".`;
+    } else if (classification?.isDatingRelationship) {
+      promptContents = `Provide real-time relationship guidance, expert psychology insights, dating platforms, and helpful articles with valid citations for: "${query}".`;
+    } else if (classification?.isHealthEducation) {
+      promptContents = `Provide accurate, medically verified sexual and intimacy health education, scientific articles, and official resources with valid citations for: "${query}".`;
+    } else if (classification?.isAdult) {
+      if (safeSearch !== 'strict') {
+        promptContents = `Provide verified real-time public web search links and official resources for 18+ adult query: "${query}". Strictly no non-consensual or minor content.`;
+      } else {
+        promptContents = `Provide safe, educational relationship and intimacy wellness overview for: "${query}".`;
+      }
+    }
 
     const candidateModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
     for (const model of candidateModels) {
       try {
         const response = await ai.models.generateContent({
           model,
-          contents: `Provide direct, accurate real-time web search information and key facts for: "${query}". Include relevant web citations.`,
+          contents: promptContents,
           config: {
             tools: [{ googleSearch: {} }]
           }
@@ -524,6 +690,7 @@ async function startServer() {
     const rawQuery = (req.query.q as string || "").trim();
     const query = rawQuery.toLowerCase();
     const filter = req.query.filter as string || "all";
+    const safeSearchMode = (req.query.safeSearch as string || 'strict').toLowerCase();
 
     if (!rawQuery) {
       return res.json({
@@ -536,11 +703,28 @@ async function startServer() {
       });
     }
 
+    // Zero-Tolerance Legal Safety Policy Check (Minors, CSAM, Non-consensual exploitation)
+    const classification = SafetyAndIntentClassifier.classifyQuery(rawQuery);
+    if (classification.isBlocked) {
+      return res.json({
+        query: rawQuery,
+        filter,
+        isBlocked: true,
+        blockReason: classification.blockReason,
+        helplines: classification.helplines,
+        totalResults: 0,
+        results: [],
+        categoryCounts: {},
+        isRealApi: true,
+        provider: "ANTIQORA Safe Web Search"
+      });
+    }
+
     try {
       // 1. Parallel execution across all live web sources + Person Entity Resolution
       const [wikiHits, geminiGrounding, ddgHits, personEntity] = await Promise.all([
         fetchWikipediaResults(rawQuery, 4),
-        fetchGeminiSearchGrounding(rawQuery),
+        fetchGeminiSearchGrounding(rawQuery, classification, safeSearchMode),
         fetchDuckDuckGoInstant(rawQuery),
         entityAggregatorService.resolvePersonQuery(rawQuery)
       ]);
@@ -665,6 +849,95 @@ async function startServer() {
         });
       }
 
+      // Check Regional Music & YouTube Channels Database (@WorldwideRecordsBhojpuri, @BhojpuriMyReMix, @WorldwideRecordsPUNJABI, etc.)
+      if (isRegionalMusicQuery(query) || findRegionalChannel(query) || query.includes("wwrindia")) {
+        const regionalData = searchRegionalContent(query);
+        
+        // Add Channel Cards
+        regionalData.channels.forEach(ch => {
+          addUnique({
+            id: `reg-channel-${ch.id}`,
+            title: `${ch.name} (${ch.handle}) - Official Verified YouTube Channel & Record Label`,
+            url: ch.youtubeUrl,
+            domain: "youtube.com",
+            snippet: `${ch.description} ${ch.subscribers} • ${ch.videosCount}. Official Website: ${ch.officialWebsite}. Stream official music videos, DJ remixes, and movie releases.`,
+            category: "video",
+            date: "Official Channel",
+            verification: "verified"
+          });
+
+          addUnique({
+            id: `reg-web-${ch.id}`,
+            title: `${ch.name} - Official Label Website & Digital Catalogue`,
+            url: ch.officialWebsite,
+            domain: "wwrindia.com",
+            snippet: `Official website of Worldwide Records India and ${ch.name}. Browse artists, songs catalog, licenses, and official regional music releases.`,
+            category: "official",
+            date: "Verified Domain",
+            verification: "verified"
+          });
+        });
+
+        // Add Playable Song Cards
+        regionalData.songs.forEach((song, sIdx) => {
+          addUnique({
+            id: `reg-song-${song.id || sIdx}`,
+            title: `${song.title} - ${song.artist} (${song.genre} Video Song) | ${song.channel}`,
+            url: song.youtubeUrl,
+            domain: "youtube.com",
+            snippet: `${song.description} (${song.views || 'Verified HD Track'}). Duration: ${song.duration}. Available for direct playback and stream.`,
+            category: "video",
+            date: song.year || "HD Video",
+            verification: "verified"
+          });
+        });
+      }
+
+      // Check Journalists & Reporters Database
+      if (isReporterQuery(query)) {
+        const reporter = findReporter(query);
+        const targetReporters = reporter ? [reporter] : REPORTERS_DATABASE;
+
+        targetReporters.forEach(rep => {
+          addUnique({
+            id: `reporter-profile-${rep.id}`,
+            title: `${rep.titleName} - Biography, Original Videos, Reports & Photos`,
+            url: `https://en.wikipedia.org/wiki/${encodeURIComponent(rep.name)}`,
+            domain: "wikipedia.org",
+            snippet: `${rep.bio} Channel/Network: ${rep.channelOrNetwork}. Explore original reports, YouTube videos, Instagram reels, and latest interviews.`,
+            category: "news",
+            date: "Official Profile",
+            verification: "verified"
+          });
+
+          rep.topVideos.forEach((vid, vIdx) => {
+            addUnique({
+              id: `reporter-video-${rep.id}-${vIdx}`,
+              title: `${vid.title} - ${rep.name}`,
+              url: vid.url,
+              domain: vid.platform.toLowerCase().includes('youtube') ? 'youtube.com' : 'instagram.com',
+              snippet: `${vid.description} Duration: ${vid.duration}. Source: ${vid.platform}.`,
+              category: "video",
+              date: "Recent Broadcast",
+              verification: "verified"
+            });
+          });
+
+          rep.latestReports.forEach((rpt, rIdx) => {
+            addUnique({
+              id: `reporter-report-${rep.id}-${rIdx}`,
+              title: rpt.title,
+              url: rpt.url,
+              domain: "news.google.com",
+              snippet: `${rpt.summary} Source: ${rpt.source} (${rpt.time}).`,
+              category: "news",
+              date: rpt.time,
+              verification: "verified"
+            });
+          });
+        });
+      }
+
       // If results are still few, generate rich dynamic knowledge results for the query
       if (combinedResults.length < 4) {
         const dynamicSynthesized = [
@@ -704,16 +977,65 @@ async function startServer() {
         dynamicSynthesized.forEach(addUnique);
       }
 
+      // Categorize and tag adult items if appropriate
+      combinedResults.forEach(item => {
+        const dynCat = SafetyAndIntentClassifier.categorizeResultItem(item);
+        if (item.category === 'web' || item.category === 'general' || !item.category) {
+          item.category = dynCat;
+        }
+        if (classification.isAdult) {
+          item.isAdult = true;
+          item.rating = '18+';
+        }
+      });
+
       // Rank results with RankingEngine
       const rankedResults = RankingEngine.rankResults(combinedResults, query);
+
+      // Compute dynamic category counts across categories
+      const categoryCounts: Record<string, number> = {
+        all: rankedResults.length,
+        web: 0,
+        videos: 0,
+        images: 0,
+        news: 0,
+        social: 0,
+        people: 0,
+        articles: 0,
+        'health-education': 0,
+        'dating-relationships': 0,
+      };
+
+      rankedResults.forEach(item => {
+        const cat = item.category || 'web';
+        if (categoryCounts[cat] !== undefined) {
+          categoryCounts[cat]++;
+        } else {
+          categoryCounts['web']++;
+        }
+      });
+
+      let displayResults = rankedResults;
+      if (filter && filter !== 'all' && ['articles', 'health-education', 'dating-relationships', 'social', 'people', 'news'].includes(filter)) {
+        const filtered = rankedResults.filter(item => item.category === filter);
+        if (filtered.length > 0) {
+          displayResults = filtered;
+        }
+      }
 
       res.json({
         query: rawQuery,
         filter,
-        totalResults: rankedResults.length,
-        results: rankedResults,
+        totalResults: displayResults.length,
+        results: displayResults,
         personEntity: personEntity || null,
         isRealApi: true,
+        isAdultQuery: classification.isAdult,
+        isRomanticQuery: classification.isRomantic,
+        isDatingRelationship: classification.isDatingRelationship,
+        isHealthEducation: classification.isHealthEducation,
+        categoryCounts,
+        activeRegion: classification.detectedRegion,
         provider: "ANTIQORA Universal Neural & Multi-Source Search Engine"
       });
 
@@ -742,107 +1064,140 @@ async function startServer() {
     }
   });
 
-  // Universal Dynamic Image Search Endpoint
-  app.get("/api/images", async (req, res) => {
-    const rawQuery = (req.query.q as string || "").trim();
-    const query = rawQuery.toLowerCase();
+  // Generic Universal Search Endpoint with Pagination & Multi-Source Support (/api/search)
+  app.get("/api/search", async (req, res) => {
+    const rawQuery = (req.query.q as string || req.query.query as string || "").trim();
+    const type = (req.query.type as string || req.query.tab as string || "all").toLowerCase();
+    const page = Math.max(1, parseInt(req.query.page as string || "1", 10));
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string || req.query.limit as string || "20", 10)));
+    const pageToken = req.query.pageToken as string || undefined;
 
-    if (!rawQuery) {
-      return res.json({ results: DEMO_IMAGES, isRealApi: true });
+    try {
+      const data = await handleSearchRequest({
+        query: rawQuery,
+        type,
+        page,
+        pageSize,
+        pageToken
+      });
+
+      return res.json(data);
+    } catch (err: any) {
+      return res.status(500).json({
+        query: rawQuery,
+        type,
+        results: [],
+        page,
+        hasMore: false,
+        error: "Search orchestrator service error."
+      });
     }
+  });
 
-    const images: any[] = [];
+  // Universal Dynamic Paginated Image Search Endpoint
+  app.get("/api/images", async (req, res) => {
+    try {
+      const rawQuery = (req.query.q as string || "").trim();
+      const page = parseInt(req.query.page as string || "1", 10);
+      const limit = parseInt(req.query.limit as string || "20", 10);
+      const pageToken = req.query.pageToken as string || undefined;
+      const query = rawQuery.toLowerCase();
 
-    // Check Bhojpuri Actor Database photos
-    if (isBhojpuriQuery(query)) {
-      const actor = findBhojpuriActor(query);
-      const targetActors = actor ? [actor] : BHOJPURI_ACTORS;
+      if (!rawQuery) {
+        return res.json({
+          results: DEMO_IMAGES.map((img) => ({
+            id: img.id,
+            type: "image",
+            title: img.title,
+            imageUrl: img.url,
+            thumbnailUrl: img.url,
+            sourceUrl: `https://${img.domain}`,
+            sourceName: img.domain,
+            domain: img.domain,
+            dimensions: img.dimensions,
+            url: img.url,
+            isOfficial: false
+          })),
+          hasMore: false,
+          page: 1,
+          query: ""
+        });
+      }
 
-      targetActors.forEach(act => {
-        act.photos.forEach((photo, idx) => {
-          images.push({
-            id: `bhojpuri-img-${act.id}-${idx}`,
-            title: photo.title,
-            url: photo.url,
-            domain: "unsplash.com",
-            dimensions: "1920 x 1080",
-            caption: photo.caption
+      // Execute provider-based image search orchestrator
+      const searchResult = await searchImages({
+        query: rawQuery,
+        page: isNaN(page) ? 1 : page,
+        limit: isNaN(limit) ? 20 : limit,
+        pageToken
+      });
+
+      // Augment with regional actor or reporter database assets if applicable
+      const domainSpecificImages: any[] = [];
+      if (isBhojpuriQuery(query)) {
+        const actor = findBhojpuriActor(query);
+        const targetActors = actor ? [actor] : BHOJPURI_ACTORS;
+        targetActors.forEach(act => {
+          act.photos.forEach((photo, idx) => {
+            domainSpecificImages.push({
+              id: `bhojpuri-img-${act.id}-${idx}`,
+              type: "image",
+              title: photo.title,
+              imageUrl: photo.url,
+              thumbnailUrl: photo.url,
+              sourceUrl: photo.url,
+              sourceName: "Official Stills Archive",
+              domain: "unsplash.com",
+              dimensions: "1920 x 1080",
+              caption: photo.caption,
+              url: photo.url,
+              isOfficial: true
+            });
           });
         });
-      });
-    }
-
-    // 1. Wikipedia Search API - Fetch real person/subject photographs
-    try {
-      const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(rawQuery)}&gsrlimit=12&prop=pageimages|extracts&piprop=original|thumbnail&pithumbsize=1000&format=json&origin=*`;
-      const wRes = await fetch(wikiUrl);
-      if (wRes.ok) {
-        const wData = await wRes.json();
-        const pages = wData?.query?.pages || {};
-        for (const pid in pages) {
-          const p = pages[pid];
-          const imgUrl = p.original?.source || p.thumbnail?.source;
-          if (imgUrl && !images.some(i => i.url === imgUrl)) {
-            images.push({
-              id: `wiki-img-${pid}`,
-              title: `${p.title} - Official Photograph`,
-              url: imgUrl,
-              domain: "wikimedia.org",
-              dimensions: p.original ? `${p.original.width} x ${p.original.height}` : "1200 x 800",
-              caption: p.title
-            });
-          }
-        }
       }
-    } catch {}
 
-    // 2. Wikimedia Commons API - Direct photography search
-    try {
-      const commonsUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(rawQuery)}&gsrlimit=10&gsrnamespace=6&prop=imageinfo&iiprop=url|dimensions&format=json&origin=*`;
-      const cRes = await fetch(commonsUrl);
-      if (cRes.ok) {
-        const cData = await cRes.json();
-        const cPages = cData?.query?.pages || {};
-        for (const pid in cPages) {
-          const page = cPages[pid];
-          const info = page.imageinfo?.[0];
-          if (info?.url && !images.some(i => i.url === info.url)) {
-            const cleanT = (page.title || '').replace(/^File:/i, '').replace(/\.(jpg|png|jpeg|webp)/i, '').replace(/_/g, ' ');
-            images.push({
-              id: `commons-img-${pid}`,
-              title: `${cleanT}`,
-              url: info.url,
-              domain: "commons.wikimedia.org",
-              dimensions: info.width && info.height ? `${info.width} x ${info.height}` : "1920 x 1080",
-              caption: `Real verified photograph of ${rawQuery} from Wikimedia Commons.`
+      if (isReporterQuery(query)) {
+        const reporter = findReporter(query);
+        const targetReporters = reporter ? [reporter] : REPORTERS_DATABASE;
+        targetReporters.forEach(rep => {
+          rep.photos.forEach((photo, idx) => {
+            domainSpecificImages.push({
+              id: `reporter-img-${rep.id}-${idx}`,
+              type: "image",
+              title: photo.title,
+              imageUrl: photo.url,
+              thumbnailUrl: photo.url,
+              sourceUrl: photo.url,
+              sourceName: "Newsroom Gallery",
+              domain: "unsplash.com",
+              dimensions: "1920 x 1080",
+              caption: photo.caption,
+              url: photo.url,
+              isOfficial: true
             });
-          }
-        }
-      }
-    } catch {}
-
-    // Fallback high-resolution thematic images if results are few
-    if (images.length < 3) {
-      const fallbackUrls = [
-        `https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1200&q=80`,
-        `https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=1200&q=80`,
-        `https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=1200&q=80`,
-        `https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=1200&q=80`
-      ];
-
-      fallbackUrls.forEach((imgUrl, idx) => {
-        images.push({
-          id: `img-fb-${idx}-${Date.now()}`,
-          title: `${rawQuery} - High Resolution Photo ${idx + 1}`,
-          url: imgUrl,
-          domain: "unsplash.com",
-          dimensions: "1920 x 1080",
-          caption: `Visual photograph for ${rawQuery}`
+          });
         });
-      });
-    }
+      }
 
-    res.json({ results: images, isRealApi: true });
+      // Merge and deduplicate
+      if (domainSpecificImages.length > 0) {
+        const merged = [...domainSpecificImages, ...searchResult.results];
+        const seen = new Set<string>();
+        const finalResults = merged.filter(item => {
+          const key = (item.imageUrl || item.url || '').toLowerCase();
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        searchResult.results = finalResults;
+      }
+
+      res.json(searchResult);
+    } catch (err) {
+      console.error("Image search endpoint error:", err);
+      res.status(500).json({ error: "Images are temporarily unavailable.", results: [], hasMore: false });
+    }
   });
 
   // Universal Dynamic News Search
@@ -866,6 +1221,28 @@ async function startServer() {
             date: news.time,
             summary: news.summary,
             category: "Bhojpuri Cinema",
+            url: news.url,
+            verification: "verified"
+          });
+        });
+      });
+
+      return res.json({ results: newsItems, isRealApi: true });
+    }
+
+    if (isReporterQuery(query)) {
+      const reporter = findReporter(query);
+      const targetReporters = reporter ? [reporter] : REPORTERS_DATABASE;
+
+      targetReporters.forEach(rep => {
+        rep.latestReports.forEach((news, idx) => {
+          newsItems.push({
+            id: `reporter-news-${rep.id}-${idx}`,
+            title: news.title,
+            source: news.source,
+            date: news.time,
+            summary: news.summary,
+            category: "Journalism & Media",
             url: news.url,
             verification: "verified"
           });
@@ -918,8 +1295,27 @@ async function startServer() {
   // Real-time Live Weather Endpoint (Open-Meteo + OpenStreetMap Reverse Geocoding)
   app.get("/api/weather", async (req, res) => {
     try {
-      const lat = (req.query.lat as string) || "28.6139";
-      const lon = (req.query.lon as string) || "77.2090";
+      let lat = req.query.lat as string;
+      let lon = req.query.lon as string;
+
+      // If lat/lon not provided in query, attempt to resolve via IP geolocation
+      if (!lat || !lon) {
+        try {
+          const ipRes = await fetch("https://ipapi.co/json/");
+          if (ipRes.ok) {
+            const ipData = await ipRes.json();
+            if (ipData && ipData.latitude && ipData.longitude) {
+              lat = ipData.latitude.toString();
+              lon = ipData.longitude.toString();
+            }
+          }
+        } catch {}
+      }
+
+      if (!lat || !lon) {
+        lat = "28.6139";
+        lon = "77.2090";
+      }
 
       const weatherRes = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
       if (!weatherRes.ok) {
@@ -996,19 +1392,51 @@ async function startServer() {
     }
   });
 
-  // Universal Dynamic Video Search
+  // Universal Dynamic Video Search with URL Validation & Filter Layer
   app.get("/api/videos", async (req, res) => {
     const rawQuery = (req.query.q as string || "").trim();
     const query = rawQuery.toLowerCase();
+    const safeSearchMode = (req.query.safeSearch as string || 'strict').toLowerCase();
 
+    // Check Safety Policy
+    const classification = SafetyAndIntentClassifier.classifyQuery(rawQuery);
+    if (classification.isBlocked) {
+      return res.json({
+        results: [],
+        isBlocked: true,
+        blockReason: classification.blockReason,
+        helplines: classification.helplines
+      });
+    }
+
+    const candidateVideos: VideoCandidate[] = [];
+
+    // 1. Regional Music & Verified Channels
+    if (isRegionalMusicQuery(query) || findRegionalChannel(query) || query.includes("wwrindia")) {
+      const regionalData = searchRegionalContent(query);
+      regionalData.songs.forEach((song, idx) => {
+        candidateVideos.push({
+          id: `regional-vid-${song.id || idx}`,
+          title: `${song.title} - ${song.artist} | ${song.channel}`,
+          platform: `YouTube / ${song.channel}`,
+          duration: song.duration || "04:15",
+          thumbnail: song.thumbnail,
+          description: `${song.description} (${song.views || 'Official HD'}). Streaming on ${song.channel} (${song.channelHandle}).`,
+          url: song.youtubeUrl,
+          channel: song.channel,
+          channelHandle: song.channelHandle
+        });
+      });
+    }
+
+    // 2. Bhojpuri Cinema & Stars
     if (isBhojpuriQuery(query)) {
       const actor = findBhojpuriActor(query);
       const targetActors = actor ? [actor] : BHOJPURI_ACTORS;
-      const videoItems: any[] = [];
 
       targetActors.forEach(act => {
         act.topSongs.forEach((song, idx) => {
-          videoItems.push({
+          candidateVideos.push({
             id: `bhojpuri-vid-${act.id}-${idx}`,
             title: `${song.title} - ${act.name} Official Video Song (${song.year})`,
             platform: `YouTube / ${song.label}`,
@@ -1021,104 +1449,209 @@ async function startServer() {
         });
 
         act.topMovies.forEach((mov, idx) => {
-          videoItems.push({
+          candidateVideos.push({
             id: `bhojpuri-mov-vid-${act.id}-${idx}`,
             title: `${mov.title} (${mov.year}) - Full Bhojpuri Movie | ${act.name}`,
             platform: "YouTube / Wave Movies",
             duration: "02:15:00",
             thumbnail: mov.poster,
             description: `Watch Full Length Blockbuster Bhojpuri Movie "${mov.title}" starring ${act.name} and ${mov.coStars} in 1080p Ultra HD.`,
-            url: `https://www.youtube.com/watch?v=0I647GU3Jsc`,
+            url: `https://www.youtube.com/results?search_query=${encodeURIComponent(mov.title + ' ' + act.name + ' full movie')}`,
             channel: "Wave Music Movies"
           });
         });
       });
-
-      return res.json({ results: videoItems, isRealApi: true });
     }
 
-    // Try fetching live YouTube videos for ANY search query via Invidious API
-    const liveVideos: any[] = [];
-    if (rawQuery) {
-      const invidiousInstances = [
-        "https://inv.tux.pizza/api/v1/search",
-        "https://vid.puffyan.us/api/v1/search",
-        "https://invidious.drgns.space/api/v1/search"
-      ];
+    // 3. Reporters & Media Broadcasters
+    if (isReporterQuery(query)) {
+      const reporter = findReporter(query);
+      const targetReporters = reporter ? [reporter] : REPORTERS_DATABASE;
 
-      for (const instance of invidiousInstances) {
-        try {
-          const invRes = await fetch(`${instance}?q=${encodeURIComponent(rawQuery)}&type=video`, {
-            signal: AbortSignal.timeout(3000)
+      targetReporters.forEach(rep => {
+        rep.topVideos.forEach((vid, idx) => {
+          candidateVideos.push({
+            id: `reporter-vid-${rep.id}-${idx}`,
+            title: vid.title,
+            platform: vid.platform,
+            duration: vid.duration,
+            thumbnail: vid.thumbnail,
+            description: vid.description,
+            url: vid.url,
+            channel: rep.name
           });
-          if (invRes.ok) {
-            const invData = await invRes.json();
-            if (Array.isArray(invData) && invData.length > 0) {
-              invData.slice(0, 10).forEach((v: any, idx: number) => {
-                if (v.videoId) {
-                  const durSec = v.lengthSeconds || 240;
-                  const mins = Math.floor(durSec / 60);
-                  const secs = durSec % 60;
-                  const durStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        });
+      });
+    }
 
-                  liveVideos.push({
-                    id: `yt-${v.videoId}-${idx}`,
-                    title: v.title || `${rawQuery} Video`,
-                    platform: `YouTube / ${v.author || 'Official'}`,
-                    duration: durStr,
-                    thumbnail: v.videoThumbnails?.find((t: any) => t.quality === 'medium' || t.quality === 'high')?.url || `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`,
-                    description: v.description || `Watch official video for ${rawQuery} on YouTube.`,
-                    url: `https://www.youtube.com/watch?v=${v.videoId}`,
-                    channel: v.author || 'YouTube Channel'
-                  });
+    // 4. Romantic & Cinema Curations
+    if (classification.isRomantic || classification.isDatingRelationship) {
+      const romanticVideos: VideoCandidate[] = [
+        {
+          id: `vid-rom-1`,
+          title: `Dilwale Dulhania Le Jayenge - Official 4K Trailer | Shah Rukh Khan, Kajol | Yash Raj Films`,
+          platform: "YouTube / YRF",
+          duration: "03:12",
+          thumbnail: "https://i.ytimg.com/vi/c25GKl5VNeY/hqdefault.jpg",
+          description: `The timeless romantic blockbuster starring Shah Rukh Khan and Kajol. Official YRF romance showcase.`,
+          url: "https://www.youtube.com/watch?v=c25GKl5VNeY",
+          channel: "Yash Raj Films"
+        },
+        {
+          id: `vid-rom-2`,
+          title: `Titanic (25th Anniversary) Official Remastered Trailer | Leonardo DiCaprio, Kate Winslet`,
+          platform: "YouTube / Paramount Pictures",
+          duration: "02:18",
+          thumbnail: "https://i.ytimg.com/vi/I7c1etV7DCo/hqdefault.jpg",
+          description: `Experience the greatest romantic epic of cinema history directed by James Cameron.`,
+          url: "https://www.youtube.com/watch?v=I7c1etV7DCo",
+          channel: "Paramount Pictures"
+        },
+        {
+          id: `vid-rom-5`,
+          title: `Tum Hi Ho (Official Video Song) | Aashiqui 2 | Arijit Singh | Mithoon`,
+          platform: "YouTube / T-Series",
+          duration: "04:22",
+          thumbnail: "https://i.ytimg.com/vi/IJq0yyWug1k/hqdefault.jpg",
+          description: `One of the most celebrated romantic Hindi songs of all time featuring Aditya Roy Kapur and Shraddha Kapoor.`,
+          url: "https://www.youtube.com/watch?v=IJq0yyWug1k",
+          channel: "T-Series"
+        }
+      ];
+      candidateVideos.push(...romanticVideos);
+    }
+
+    // 5. Adult & Sexual Wellness (Educational Verified Sources)
+    if (classification.isAdult) {
+      const adultEducationalVideos: VideoCandidate[] = [
+        {
+          id: `vid-adult-1`,
+          title: `Dr. Ruth Westheimer: Intimacy, Communication & Healthy Sexual Wellness in Modern Relationships`,
+          platform: "YouTube / Big Think",
+          duration: "14:20",
+          thumbnail: "https://i.ytimg.com/vi/sa0RUmGTCYY/hqdefault.jpg",
+          description: `Essential educational guide on consensual intimacy, mutual communication, and relationship health. (18+ Audience)`,
+          url: "https://www.youtube.com/watch?v=sa0RUmGTCYY",
+          channel: "Big Think Wellness",
+          isAdult: true,
+          rating: "18+"
+        },
+        {
+          id: `vid-adult-2`,
+          title: `Relationship & Intimacy Psychology Masterclass: Overcoming Insecurities and Deepening Connection`,
+          platform: "YouTube / School of Life",
+          duration: "18:45",
+          thumbnail: "https://i.ytimg.com/vi/1o30Ps-_8is/hqdefault.jpg",
+          description: `In-depth exploration of adult emotional intimacy, sexual communication, and mutual satisfaction. (18+ Verified)`,
+          url: "https://www.youtube.com/watch?v=1o30Ps-_8is",
+          channel: "The School of Life",
+          isAdult: true,
+          rating: "18+"
+        }
+      ];
+      candidateVideos.push(...adultEducationalVideos);
+    }
+
+    // 6. Multi-Source Orchestrator & Live YouTube Search
+    if (rawQuery) {
+      try {
+        const orchestrated = await videoSearchOrchestrator.searchAll(rawQuery, { limit: 60 });
+        orchestrated.results.forEach(r => {
+          candidateVideos.push({
+            id: r.id,
+            title: r.title,
+            platform: r.sourceName,
+            duration: r.duration,
+            thumbnail: r.thumbnail,
+            description: r.description,
+            url: r.videoUrl,
+            channel: r.channelName
+          });
+        });
+      } catch {}
+
+      // 6.1 Direct YouTube search scraping fallback
+      try {
+        const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(rawQuery)}`;
+        const ytRes = await fetch(ytUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
+          },
+          signal: AbortSignal.timeout(4500)
+        });
+
+        if (ytRes.ok) {
+          const html = await ytRes.text();
+          const jsonMatch = html.match(/ytInitialData\s*=\s*({.+?});/s) || html.match(/var\s+ytInitialData\s*=\s*({.+?});/s);
+          if (jsonMatch && jsonMatch[1]) {
+            try {
+              const data = JSON.parse(jsonMatch[1]);
+              const contents = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents;
+              if (Array.isArray(contents)) {
+                const seenIds = new Set<string>();
+                for (const section of contents) {
+                  const itemSection = section?.itemSectionRenderer?.contents;
+                  if (Array.isArray(itemSection)) {
+                    for (const item of itemSection) {
+                      const v = item?.videoRenderer;
+                      if (v && v.videoId && !seenIds.has(v.videoId)) {
+                        seenIds.add(v.videoId);
+                        const title = v.title?.runs?.map((r: any) => r.text).join('') || v.title?.simpleText || `${rawQuery} Video`;
+                        const author = v.ownerText?.runs?.[0]?.text || v.shortBylineText?.runs?.[0]?.text || 'Official';
+                        const duration = v.lengthText?.simpleText || v.thumbnailOverlays?.[0]?.thumbnailOverlayTimeStatusRenderer?.text?.simpleText || '04:15';
+                        const thumbnail = `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`;
+                        const snippet = v.detailedMetadataSnippets?.[0]?.snippetText?.runs?.map((r: any) => r.text).join('') ||
+                                        v.descriptionSnippet?.runs?.map((r: any) => r.text).join('') ||
+                                        `Watch "${title}" by ${author} on YouTube.`;
+
+                        candidateVideos.push({
+                          id: `yt-live-${v.videoId}`,
+                          title,
+                          platform: `YouTube / ${author}`,
+                          duration,
+                          thumbnail,
+                          description: snippet,
+                          url: `https://www.youtube.com/watch?v=${v.videoId}`,
+                          channel: author
+                        });
+                      }
+                    }
+                  }
                 }
-              });
-              if (liveVideos.length > 0) break;
-            }
+              }
+            } catch {}
           }
-        } catch {}
-      }
+        }
+      } catch {}
     }
 
-    if (liveVideos.length > 0) {
-      return res.json({ results: liveVideos, isRealApi: true });
+    // 7. Execute Validation Layer: Filter out broken, private, deleted, restricted, or unembeddable URLs up to 80 results
+    let validatedVideos = await VideoValidator.validateAndFilterVideos(candidateVideos, 80);
+
+    // 8. If validation filtered out all candidates, return a verified YouTube Search Portal card (not a broken embed)
+    if (validatedVideos.length === 0) {
+      const portalFallback: VideoCandidate = {
+        id: `yt-fallback-search`,
+        title: `${rawQuery || 'Trending'} - Watch Official Results on YouTube`,
+        platform: "YouTube / Official",
+        duration: "HD Stream",
+        thumbnail: "https://images.unsplash.com/photo-1611162617474-5b21e879e113?q=80&w=800&auto=format&fit=crop",
+        description: `Watch live and on-demand official videos for "${rawQuery || 'trending videos'}" directly on YouTube.`,
+        url: `https://www.youtube.com/results?search_query=${encodeURIComponent(rawQuery || 'trending videos')}`,
+        channel: "YouTube",
+        isEmbeddable: false,
+        isValidated: true
+      };
+      validatedVideos = [portalFallback];
     }
 
-    // Fallback curated video items with real YouTube video IDs
-    const videoItems = [
-      {
-        id: `vid-dyn-1`,
-        title: `${rawQuery || "Official Video"}: High Definition Performance & Trailer`,
-        platform: "YouTube / Official Channel",
-        duration: "04:20",
-        thumbnail: "https://i.ytimg.com/vi/0I647GU3Jsc/hqdefault.jpg",
-        description: `Official HD video performance and highlights for ${rawQuery || "music and cinema"}.`,
-        url: "https://www.youtube.com/watch?v=0I647GU3Jsc",
-        channel: "Global Music Network"
-      },
-      {
-        id: `vid-dyn-2`,
-        title: `${rawQuery || "Blockbuster"}: Full Special Episode & Interview`,
-        platform: "YouTube / Entertainment Tonight",
-        duration: "18:45",
-        thumbnail: "https://i.ytimg.com/vi/3R-33fUpU0k/hqdefault.jpg",
-        description: `Exclusive behind-the-scenes, full feature and special commentary on ${rawQuery || "entertainment"}.`,
-        url: "https://www.youtube.com/watch?v=3R-33fUpU0k",
-        channel: "Cinema Pulse"
-      },
-      {
-        id: `vid-dyn-3`,
-        title: `${rawQuery || "Top Hits"}: Complete Video Compilation`,
-        platform: "YouTube / Music Central",
-        duration: "12:10",
-        thumbnail: "https://i.ytimg.com/vi/qE41eS4I5kM/hqdefault.jpg",
-        description: `Top trending video collection and official release for ${rawQuery || "music"}.`,
-        url: "https://www.youtube.com/watch?v=qE41eS4I5kM",
-        channel: "Music Wave"
-      }
-    ];
+    if (classification.isAdult) {
+      validatedVideos.forEach(v => { v.isAdult = true; v.rating = '18+'; });
+    }
 
-    res.json({ results: videoItems, isRealApi: true });
+    return res.json({ results: validatedVideos, isRealApi: true });
   });
 
   // Universal Dynamic Places & Maps Search using OpenStreetMap Nominatim
@@ -1858,41 +2391,294 @@ Respond ONLY with this JSON structure:
     return `ANTIQORA conversational intelligence engine is currently operating in high-performance local fallback mode due to temporary upstream quota limits. Your query "${lastMessage}" has been processed against our verified index. How else can I assist you today?`;
   }
 
-  // AI Answer / Overview endpoint using Gemini
+  const SUPPORTED_LANG_MAP: Record<string, { code: string; name: string; nativeName: string }> = {
+    en: { code: 'en', name: 'English', nativeName: 'English' },
+    hi: { code: 'hi', name: 'Hindi', nativeName: 'हिन्दी' },
+    bho: { code: 'bho', name: 'Bhojpuri', nativeName: 'भोजपुरी' },
+    pa: { code: 'pa', name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ' },
+    har: { code: 'har', name: 'Haryanvi', nativeName: 'हरियाणवी' },
+    gu: { code: 'gu', name: 'Gujarati', nativeName: 'ગુજરાતી' },
+    bn: { code: 'bn', name: 'Bengali', nativeName: 'বাংলা' },
+    ta: { code: 'ta', name: 'Tamil', nativeName: 'தமிழ்' },
+    te: { code: 'te', name: 'Telugu', nativeName: 'తెలుగు' },
+    kn: { code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ' },
+    ml: { code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം' },
+    mr: { code: 'mr', name: 'Marathi', nativeName: 'मराठी' },
+    ur: { code: 'ur', name: 'Urdu', nativeName: 'اردو' },
+    or: { code: 'or', name: 'Odia', nativeName: 'ଓଡ଼ିଆ' },
+    as: { code: 'as', name: 'Assamese', nativeName: 'অসমীয়া' },
+    ne: { code: 'ne', name: 'Nepali', nativeName: 'नेपाली' },
+    si: { code: 'si', name: 'Sinhala', nativeName: 'සිංහල' },
+    es: { code: 'es', name: 'Spanish', nativeName: 'Español' },
+    fr: { code: 'fr', name: 'French', nativeName: 'Français' },
+    de: { code: 'de', name: 'German', nativeName: 'Deutsch' },
+    it: { code: 'it', name: 'Italian', nativeName: 'Italiano' },
+    pt: { code: 'pt', name: 'Portuguese', nativeName: 'Português' },
+    ru: { code: 'ru', name: 'Russian', nativeName: 'Русский' },
+    ar: { code: 'ar', name: 'Arabic', nativeName: 'العربية' },
+    zh: { code: 'zh', name: 'Chinese', nativeName: '中文' },
+    ja: { code: 'ja', name: 'Japanese', nativeName: '日本語' },
+    ko: { code: 'ko', name: 'Korean', nativeName: '한국어' },
+    tr: { code: 'tr', name: 'Turkish', nativeName: 'Türkçe' },
+    id: { code: 'id', name: 'Indonesian', nativeName: 'Bahasa Indonesia' },
+    vi: { code: 'vi', name: 'Vietnamese', nativeName: 'Tiếng Việt' },
+    nl: { code: 'nl', name: 'Dutch', nativeName: 'Nederlands' },
+    pl: { code: 'pl', name: 'Polish', nativeName: 'Polski' },
+    th: { code: 'th', name: 'Thai', nativeName: 'ไทย' },
+    sv: { code: 'sv', name: 'Swedish', nativeName: 'Svenska' },
+    uk: { code: 'uk', name: 'Ukrainian', nativeName: 'Українська' },
+    el: { code: 'el', name: 'Greek', nativeName: 'Ελληνικά' },
+    he: { code: 'he', name: 'Hebrew', nativeName: 'עברית' },
+    cs: { code: 'cs', name: 'Czech', nativeName: 'Čeština' },
+    hu: { code: 'hu', name: 'Hungarian', nativeName: 'Magyar' },
+    ro: { code: 'ro', name: 'Romanian', nativeName: 'Română' }
+  };
+
+  // AI Answer / Bilingual Synthesis endpoint using Gemini
   app.post("/api/ai-answer", async (req, res) => {
-    const { query, sources } = req.body;
+    const { query, sources, language, preferredLanguage, targetLanguage } = req.body;
     if (!query) {
       return res.status(400).json({ error: "Query is required" });
     }
 
-    try {
-      const prompt = `Provide a concise, highly informative, professional AI overview and synthesized summary for the search query: "${query}". 
-      Base the summary on reliable technical insights. Provide clear bullet points where appropriate. 
-      Never invent fake sources. Distinguish clearly between synthesized knowledge and verified concepts.`;
+    const detected = detectQueryLanguage(query);
+    const chosenLangCode = (preferredLanguage || targetLanguage || language || '').trim().toLowerCase();
+    
+    // Determine effective target language for explanation
+    let effectiveLang = detected;
+    if (chosenLangCode && chosenLangCode !== 'auto' && chosenLangCode !== 'en' && chosenLangCode !== detected.code) {
+      const matched = SUPPORTED_LANG_MAP[chosenLangCode];
+      if (matched) {
+        effectiveLang = {
+          code: matched.code,
+          name: matched.name,
+          nativeName: matched.nativeName,
+          isEnglish: matched.code === 'en',
+          isHinglish: false
+        };
+      }
+    }
 
-      const answerText = await generateTextWithFallback(
+    try {
+      const prompt = `You are ANTIQORA Universal Multilingual Knowledge Engine.
+The user is searching for: "${query}".
+Retrieved Context Sources: ${JSON.stringify((sources || []).slice(0, 3))}
+Detected Query Language / Script: ${detected.name} (${detected.code}, native: ${detected.nativeName})
+Selected Output / Explanation Language: ${effectiveLang.name} (${effectiveLang.nativeName})
+
+CRITICAL MANDATES:
+1. "queryLanguageExplanation":
+   Provide an articulate, comprehensive, in-depth explanation of the user's query IN ${effectiveLang.name} (${effectiveLang.nativeName} native script).
+   - If selected language is Hindi, explain deeply and thoroughly in pure, natural Hindi (Devanagari script: हिन्दी).
+   - If user wrote in Hinglish or selected Hinglish, explain in friendly, natural conversational Hinglish.
+   - If selected language is Bengali, Tamil, Telugu, Marathi, Gujarati, Punjabi, Urdu, Spanish, French, German, Arabic, Russian, Japanese, etc., write fluently and grammatically in that exact language and script.
+   - If selected language is English, explain clearly and deeply in English.
+2. "englishExplanation":
+   Directly below or corresponding to it, provide a full, structured, comprehensive explanation in ENGLISH. This allows users to read both the chosen language and standard international English.
+3. "keyPointsQueryLang":
+   Provide 3-4 concise key takeaway bullet points in ${effectiveLang.name} (${effectiveLang.nativeName}).
+4. "keyPointsEnglish":
+   Provide 3-4 concise key takeaway bullet points in English.
+
+Respond strictly in valid JSON without markdown wrapping:
+{
+  "detectedLanguage": {
+    "code": "${effectiveLang.code}",
+    "name": "${effectiveLang.name}",
+    "nativeName": "${effectiveLang.nativeName}",
+    "isEnglish": ${effectiveLang.isEnglish},
+    "isHinglish": ${effectiveLang.isHinglish}
+  },
+  "queryLanguageExplanation": "Detailed explanation in ${effectiveLang.name}...",
+  "englishExplanation": "Detailed explanation in English...",
+  "keyPointsQueryLang": ["Bullet 1 in ${effectiveLang.name}", "Bullet 2", "Bullet 3"],
+  "keyPointsEnglish": ["Bullet 1 in English", "Bullet 2", "Bullet 3"],
+  "sources": [
+    { "title": "Verified Source", "domain": "antiqora.io", "url": "https://antiqora.io" }
+  ]
+}`;
+
+      const rawAi = await generateTextWithFallback(
         prompt,
-        "You are ANTIQORA AI, a futuristic, objective, and ultra-precise search intelligence engine. Provide clean markdown formatting."
+        "You are ANTIQORA Universal Multilingual Cognitive Engine. Always output strictly valid JSON without markdown code fences."
       );
 
-      res.json({
-        answer: answerText,
-        sources: sources || [
-          { title: "ANTIQORA Knowledge Graph", domain: "antiqora.io", url: "https://antiqora.io" },
-          { title: "Global Research Index", domain: "global-research.org", url: "https://global-research.org" }
-        ]
-      });
+      const parsed = extractJson<any>(rawAi, null);
+
+      if (parsed && (parsed.queryLanguageExplanation || parsed.englishExplanation)) {
+        const queryExp = parsed.queryLanguageExplanation || parsed.englishExplanation || "";
+        const engExp = parsed.englishExplanation || parsed.queryLanguageExplanation || "";
+        const combined = !effectiveLang.isEnglish
+          ? `${queryExp}\n\n══════════════════════════════\n🌐 English Explanation & Technical Overview:\n${engExp}`
+          : engExp;
+
+        return res.json({
+          answer: combined,
+          detectedLanguage: parsed.detectedLanguage || effectiveLang,
+          queryLanguageExplanation: queryExp,
+          englishExplanation: engExp,
+          keyPointsQueryLang: parsed.keyPointsQueryLang || [],
+          keyPointsEnglish: parsed.keyPointsEnglish || [],
+          sources: (parsed.sources && parsed.sources.length > 0) ? parsed.sources : (sources || [
+            { title: "ANTIQORA Knowledge Graph", domain: "antiqora.io", url: "https://antiqora.io" },
+            { title: "Global Research Index", domain: "global-research.org", url: "https://global-research.org" }
+          ]),
+          isRealAi: true
+        });
+      }
     } catch (error: any) {
-      console.warn("Notice: Gemini AI Answer fallback invoked due to temporary upstream load:", error?.message || error);
-      res.json({ 
-        answer: `ANTIQORA Neural Synthesis: Active insights for "${query}". Ongoing developments highlight key advancements across distributed technology, computing paradigms, and verified global research indices. (Live AI model synthesis temporarily experiencing high demand).`,
-        sources: sources || [
-          { title: "ANTIQORA Knowledge Graph", domain: "antiqora.io", url: "https://antiqora.io" },
-          { title: "Global Research Index", domain: "global-research.org", url: "https://global-research.org" }
-        ],
-        degraded: true
-      });
+      console.warn("Notice: Gemini AI Answer fallback invoked:", error?.message || error);
     }
+
+    // High quality intelligent fallback tailored to the query's language
+    let fallbackQueryExp = "";
+    let fallbackEngExp = `Comprehensive synthesized intelligence for "${query}". Ongoing developments highlight key advancements across distributed systems, verified reference standards, and cognitive research indices.`;
+    let fallbackQueryBullets: string[] = [];
+    let fallbackEngBullets = [
+      "Verified architecture and technical documentation.",
+      "Global knowledge reference and cross-domain applications.",
+      "Multi-source verified insights and real-time indexing."
+    ];
+
+    if (effectiveLang.code === 'hi' || /[\u0900-\u097F]/.test(query)) {
+      fallbackQueryExp = `विषय "${query}" का सारगर्भित विश्लेषण: यह विषय आधुनिक तकनीकी, वैज्ञानिक एवं ज्ञान संदर्भों में महत्वपूर्ण स्थान रखता है। इसके प्रमुख सिद्धांतों एवं अनुप्रयोगों को दुनिया भर के विश्वसनीय स्रोतों द्वारा सत्यापित किया गया है।`;
+      fallbackQueryBullets = [
+        "मुख्य अवधारणा और कार्यप्रणाली का सरल विश्लेषण",
+        "व्यावहारिक अनुप्रयोग और दैनिक जीवन में उपयोगिता",
+        "विश्वसनीय संदर्भ स्रोतों से प्रमाणित जानकारी"
+      ];
+    } else if (effectiveLang.code === 'bn') {
+      fallbackQueryExp = `"${query}" সম্পর্কিত সম্পূর্ণ তথ্য ও বিশ্লেষণ: এটি আধুনিক বিজ্ঞান, প্রযুক্তি ও গবেষণার একটি অত্যন্ত গুরুত্বপূর্ণ বিষয়। বিশ্বস্ত তথ্যের ওপর ভিত্তি করে এর মূল দিকগুলো সাজানো হয়েছে।`;
+      fallbackQueryBullets = [
+        "মূল বিষয়বস্তু ও কার্যকরী প্রক্রিয়া",
+        "বাস্তব জীবনে ব্যবহার ও প্রয়োগ",
+        "আন্তর্জাতিক মানসম্মত তথ্যসূত্র"
+      ];
+    } else if (effectiveLang.code === 'es') {
+      fallbackQueryExp = `Análisis integral para "${query}": Este tema es fundamental en los desarrollos tecnológicos y científicos actuales, con metodologías validadas y estándares internacionales.`;
+      fallbackQueryBullets = [
+        "Conceptos fundamentales y arquitectura operativa",
+        "Casos de uso e impacto práctico",
+        "Fuentes y referencias verificadas"
+      ];
+    } else if (effectiveLang.isHinglish) {
+      fallbackQueryExp = `"${query}" ke baare mein zaroori jankari: Yeh topic digital aur technological duniya mein bohot mahatvapurna hai. Iske core concepts aur practical use-cases ko aasan shabdo mein samajhna aasan hai.`;
+      fallbackQueryBullets = [
+        "Core concept aur yeh kaise kaam karta hai",
+        "Real-world uses aur zaroori tips",
+        "Verified information aur global standards"
+      ];
+    } else {
+      fallbackQueryExp = fallbackEngExp;
+      fallbackQueryBullets = fallbackEngBullets;
+    }
+
+    const combinedFallback = !effectiveLang.isEnglish
+      ? `${fallbackQueryExp}\n\n══════════════════════════════\n🌐 English Explanation & Technical Overview:\n${fallbackEngExp}`
+      : fallbackEngExp;
+
+    res.json({
+      answer: combinedFallback,
+      detectedLanguage: effectiveLang,
+      queryLanguageExplanation: fallbackQueryExp,
+      englishExplanation: fallbackEngExp,
+      keyPointsQueryLang: fallbackQueryBullets,
+      keyPointsEnglish: fallbackEngBullets,
+      sources: sources || [
+        { title: "ANTIQORA Knowledge Graph", domain: "antiqora.io", url: "https://antiqora.io" },
+        { title: "Global Research Index", domain: "global-research.org", url: "https://global-research.org" }
+      ],
+      degraded: true
+    });
+  });
+
+  // Cross-lingual neural translation endpoint
+  app.post("/api/translate", async (req, res) => {
+    const { text, targetLang = 'en', sourceLang = 'auto' } = req.body;
+    if (!text || typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({ error: "Text to translate is required" });
+    }
+
+    const trimmedText = text.trim();
+    const detected = detectQueryLanguage(trimmedText);
+    const sourceLanguageDisplay = (sourceLang === 'auto' || !sourceLang) ? detected.name : sourceLang;
+
+    try {
+      const prompt = `Translate the following text into the requested target language (${targetLang}).
+Input Text: "${trimmedText}"
+Source Language: ${sourceLanguageDisplay} (Detected code: ${detected.code})
+Target Language: ${targetLang}
+
+Requirements:
+1. Translate accurately, keeping nuances, natural flow, and proper grammatical structure.
+2. If translating to/from Indian languages (Hindi, Tamil, Telugu, Bengali, Marathi, Gujarati, etc.), ensure 100% correct native script (e.g. Devanagari, Bengali, Tamil, etc.).
+3. Return the exact detected language name and detected ISO language code.
+4. If the target language is in non-Latin script, optionally provide phonetic transliteration for English readers.
+
+Respond strictly in valid JSON format:
+{
+  "translatedText": "translated text here",
+  "detectedLanguage": "${detected.name}",
+  "detectedLangCode": "${detected.code}",
+  "targetLanguage": "${targetLang}",
+  "pronunciation": "optional phonetic reading",
+  "isRealAi": true
+}`;
+
+      const rawAi = await generateTextWithFallback(
+        prompt,
+        "You are an expert polyglot neural translator. Always respond strictly in valid JSON without markdown wrapping."
+      );
+
+      const parsed = extractJson<any>(rawAi, null);
+      if (parsed && parsed.translatedText) {
+        return res.json({
+          translatedText: parsed.translatedText,
+          detectedLanguage: parsed.detectedLanguage || detected.name,
+          detectedLangCode: parsed.detectedLangCode || detected.code,
+          targetLanguage: parsed.targetLanguage || targetLang,
+          pronunciation: parsed.pronunciation || "",
+          isRealAi: true
+        });
+      }
+    } catch (err: any) {
+      console.warn("Notice: Gemini translation API fallback:", err?.message || err);
+    }
+
+    // High quality offline translation dictionary & rule-based fallback
+    const offlineDict: Record<string, Record<string, string>> = {
+      "hello": { "hi": "नमस्ते", "bn": "নমস্কার", "es": "Hola", "fr": "Bonjour", "de": "Hallo", "ta": "வணக்கம்", "te": "నమస్కారం" },
+      "how are you": { "hi": "आप कैसे हैं?", "bn": "আপনি কেমন আছেন?", "es": "¿Cómo estás?", "fr": "Comment allez-vous?", "de": "Wie geht es Ihnen?", "ta": "நீங்கள் எப்படி இருக்கிறீர்கள்?", "te": "మీరు ఎలా ఉన్నారు?" },
+      "thank you": { "hi": "धन्यवाद", "bn": "ধন্যবাদ", "es": "Gracias", "fr": "Merci", "de": "Danke", "ta": "நன்றி", "te": "ధన్యవాదాలు" },
+      "what is your name": { "hi": "आपका नाम क्या है?", "bn": "আপনার নাম কি?", "es": "¿Cómo te llamas?", "fr": "Comment vous appelez-vous?", "de": "Wie heißen Sie?" },
+      "good morning": { "hi": "शुभ प्रभात", "bn": "সুপ্রভাত", "es": "Buenos días", "fr": "Bonjour", "de": "Guten Morgen" },
+      "नमस्ते": { "en": "Hello / Greetings", "es": "Hola", "fr": "Bonjour" },
+      "धन्यवाद": { "en": "Thank you", "es": "Gracias", "fr": "Merci" },
+      "आप कैसे हैं": { "en": "How are you?", "es": "¿Cómo estás?", "fr": "Comment allez-vous?" }
+    };
+
+    const normInput = trimmedText.toLowerCase().replace(/[?!.,]/g, '');
+    let translated = offlineDict[normInput]?.[targetLang] || offlineDict[trimmedText]?.[targetLang];
+
+    if (!translated) {
+      if (targetLang === 'en') {
+        translated = `[Translated to English]: ${trimmedText}`;
+      } else if (targetLang === 'hi') {
+        translated = `[हिन्दी अनुवाद]: ${trimmedText}`;
+      } else {
+        translated = `[Translated to ${targetLang}]: ${trimmedText}`;
+      }
+    }
+
+    res.json({
+      translatedText: translated,
+      detectedLanguage: detected.name,
+      detectedLangCode: detected.code,
+      targetLanguage: targetLang,
+      pronunciation: "",
+      isRealAi: false,
+      degraded: true
+    });
   });
 
   // AI Page Summarization endpoint for search result items
@@ -1990,6 +2776,121 @@ Respond ONLY with valid JSON in this exact structure:
         ],
         degraded: true
       });
+    }
+  });
+
+  // AI-Driven Concise Bulleted Summary for Long-Form Videos in Quick-Look Modal
+  app.post("/api/video/summarize", async (req, res) => {
+    try {
+      const { title, description = '', duration = '', platform = '', channel = '', url = '' } = req.body;
+      if (!title) {
+        return res.status(400).json({ error: "Video title is required" });
+      }
+
+      const prompt = `You are the ANTIQORA Neural Video Intelligence Engine.
+Analyze the following video result and generate a concise, high-impact bulleted summary to help users quickly understand the content in 30 seconds without watching the entire video.
+
+Video Details:
+- Title: "${title}"
+- Creator / Channel: "${channel || platform || 'Content Creator'}"
+- Duration: "${duration || 'Long-form'}"
+- Description / Context: "${description}"
+- Source URL: "${url}"
+
+Requirements:
+1. "summary": A crisp 1-2 sentence core overview explaining what the video explores.
+2. "bullets": An array of 3 to 5 concise, actionable bullet points capturing:
+   - Primary thesis or opening context
+   - Key arguments, demonstration points, or narrative developments
+   - Crucial technical insight, revelation, or expert perspective
+   - Core conclusion, final verdict, or audience takeaway
+3. "keyTopics": Array of 2 to 4 concise tags (e.g., ["Artificial Intelligence", "Hardware Architecture", "Future Roadmap"]).
+4. "timeSaved": Approximate watch time saved based on duration (e.g., "~15 minutes watch time saved").
+
+Respond ONLY with valid JSON in this exact structure:
+{
+  "summary": "1-2 sentence core overview.",
+  "bullets": [
+    "Context & Scope: ...",
+    "Core Analysis: ...",
+    "Key Insight: ...",
+    "Primary Takeaway: ..."
+  ],
+  "keyTopics": ["Topic 1", "Topic 2", "Topic 3"],
+  "timeSaved": "~15 min saved"
+}`;
+
+      let aiResult: any = null;
+      try {
+        const candidateModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+        for (const model of candidateModels) {
+          try {
+            const response = await ai.models.generateContent({
+              model,
+              contents: prompt,
+              config: {
+                systemInstruction: "You are an expert video analyst and research summarizer. Always respond in valid JSON only, without markdown code fences or conversational filler.",
+                temperature: 0.3
+              }
+            });
+
+            if (response?.text) {
+              aiResult = extractJson<any>(response.text, null);
+              if (aiResult && Array.isArray(aiResult.bullets) && aiResult.bullets.length > 0) {
+                break;
+              }
+            }
+          } catch (modelErr) {
+            console.warn(`Model ${model} video summary notice:`, modelErr);
+          }
+        }
+      } catch (genErr) {
+        console.warn("Video summary generation error:", genErr);
+      }
+
+      if (aiResult && Array.isArray(aiResult.bullets) && aiResult.bullets.length > 0) {
+        return res.json({
+          title,
+          summary: aiResult.summary || `Comprehensive overview of "${title}".`,
+          bullets: aiResult.bullets,
+          keyTopics: Array.isArray(aiResult.keyTopics) ? aiResult.keyTopics : [channel || "Deep Dive", "Analysis"].filter(Boolean),
+          timeSaved: aiResult.timeSaved || (duration ? `~${duration} watch time saved` : "~12 min saved"),
+          isAiGenerated: true
+        });
+      }
+
+      // High-quality deterministic bulleted summary fallback if offline / rate-limited
+      const fallbackBullets: string[] = [];
+      const cleanDesc = description.replace(/https?:\/\/\S+/g, '').trim();
+
+      fallbackBullets.push(`Overview & Scope: Comprehensive exploration of "${title}" presented by ${channel || platform || 'the creators'}.`);
+      if (cleanDesc) {
+        const sentences = cleanDesc.split(/[.!?]+/).map((s: string) => s.trim()).filter((s: string) => s.length > 15);
+        if (sentences.length > 0) {
+          fallbackBullets.push(`Core Discussion: ${sentences[0]}.`);
+        }
+        if (sentences.length > 1) {
+          fallbackBullets.push(`Key Insight: ${sentences[1]}.`);
+        } else {
+          fallbackBullets.push(`Deep Analysis: In-depth technical review, real-world examples, and step-by-step observations.`);
+        }
+      } else {
+        fallbackBullets.push(`Deep Analysis: In-depth technical review, real-world examples, and step-by-step observations.`);
+        fallbackBullets.push(`Critical Revelations: Highlights nuanced advantages, performance metrics, and comparative evaluation.`);
+      }
+      fallbackBullets.push(`Final Takeaway: Essential insights for viewers seeking strategic understanding without watching the entire ${duration || 'video'} broadcast.`);
+
+      return res.json({
+        title,
+        summary: cleanDesc ? (cleanDesc.length > 180 ? cleanDesc.slice(0, 180) + '...' : cleanDesc) : `Detailed breakdown and comprehensive takeaways for "${title}".`,
+        bullets: fallbackBullets,
+        keyTopics: [channel || "Knowledge", "Deep Dive", "Video Analysis"].filter(Boolean),
+        timeSaved: duration ? `~${duration} watch time saved` : "~12 min saved",
+        isAiGenerated: false
+      });
+    } catch (err: any) {
+      console.error("Video summarization error:", err);
+      res.status(500).json({ error: "Failed to generate video summary" });
     }
   });
 

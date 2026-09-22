@@ -1,15 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NewsResultItem } from '../services/api';
-import { Newspaper, ExternalLink, Calendar, Tag, AlertCircle, X } from 'lucide-react';
+import { Newspaper, ExternalLink, Calendar, Tag, AlertCircle, X, Search } from 'lucide-react';
 
 interface NewsViewProps {
   news: NewsResultItem[];
   isLoading?: boolean;
+  searchQuery?: string;
+  onSearch?: (query: string) => void;
 }
 
-export const NewsView: React.FC<NewsViewProps> = ({ news }) => {
+export const NewsView: React.FC<NewsViewProps> = ({ news, searchQuery = '', onSearch }) => {
+  const [searchTerm, setSearchTerm] = useState(searchQuery);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [activeStory, setActiveStory] = useState<NewsResultItem | null>(null);
+
+  useEffect(() => {
+    setSearchTerm(searchQuery);
+  }, [searchQuery]);
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchTerm.trim() && onSearch) {
+      onSearch(searchTerm.trim());
+    }
+  };
 
   const categories = ["all", "Science", "Technology", "Business"];
 
@@ -21,7 +35,7 @@ export const NewsView: React.FC<NewsViewProps> = ({ news }) => {
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 space-y-6">
       
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -37,21 +51,34 @@ export const NewsView: React.FC<NewsViewProps> = ({ news }) => {
           </p>
         </div>
 
-        {/* Category filters */}
-        <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-2 sm:pb-0">
-          {categories.map(cat => (
-            <button
-              key={cat}
-              onClick={() => setSelectedCategory(cat)}
-              className={`rounded-xl px-3 py-1.5 text-xs font-semibold capitalize whitespace-nowrap transition ${
-                selectedCategory === cat 
-                  ? 'bg-cyan-500 text-slate-950 shadow-md' 
-                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
+        {/* Search Input & Category Filters */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+          <form onSubmit={handleSearchSubmit} className="relative w-full sm:w-72">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search news headlines..."
+              className="w-full rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 pl-9 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500 shadow-sm"
+            />
+            <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
+          </form>
+
+          <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto pb-1 sm:pb-0">
+            {categories.map(cat => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`rounded-xl px-3 py-1.5 text-xs font-semibold capitalize whitespace-nowrap transition ${
+                  selectedCategory === cat 
+                    ? 'bg-cyan-500 text-slate-950 shadow-md font-bold' 
+                    : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

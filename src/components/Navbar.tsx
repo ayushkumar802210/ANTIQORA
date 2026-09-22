@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Logo } from './Logo';
 import { ThreeDotMenu } from './ThreeDotMenu';
+import { LanguageSwitcher } from './LanguageSwitcher';
+import { SearchSuggestionsDropdown } from './SearchSuggestionsDropdown';
+import { computeSuggestions } from '../services/suggestionsService';
 import { TabType, UserProfile, FullPageView } from '../types';
 import { SUPPORTED_LANGUAGES } from '../services/languages';
 import { 
@@ -37,7 +40,9 @@ import {
   EyeOff,
   AlertCircle,
   CheckCircle2,
-  ShieldCheck
+  ShieldCheck,
+  Share2,
+  Code
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -59,6 +64,9 @@ interface NavbarProps {
   onOpenDocument?: () => void;
   currentLanguage?: string;
   onSelectLanguage?: (code: string) => void;
+  recentSearches?: string[];
+  onDeleteRecent?: (query: string) => void;
+  onClearRecent?: () => void;
 
   // Browser Navigation & Three-Dot Controls
   canGoBack?: boolean;
@@ -96,6 +104,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenDocument,
   currentLanguage = 'en',
   onSelectLanguage,
+  recentSearches = [],
+  onDeleteRecent,
+  onClearRecent,
 
   canGoBack = false,
   canGoForward = false,
@@ -117,6 +128,92 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [showPermissionHelp, setShowPermissionHelp] = useState(false);
   const [isLocatingFromHeader, setIsLocatingFromHeader] = useState(false);
   const [isReloadSpinning, setIsReloadSpinning] = useState(false);
+
+  // Autocomplete Suggestions State for Navbar
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [serverSuggestions, setServerSuggestions] = useState<string[]>([]);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Compute dynamic autocomplete suggestions (matching past queries from recentSearches first)
+  const suggestions = useMemo(() => {
+    return computeSuggestions(searchQuery, recentSearches, serverSuggestions);
+  }, [searchQuery, recentSearches, serverSuggestions]);
+
+  // Dismiss suggestions dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, []);
+
+  // Debounced server autocomplete for Navbar search
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    setSelectedIndex(-1);
+
+    if (!trimmed) {
+      setServerSuggestions([]);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      fetch(`/api/autocomplete?q=${encodeURIComponent(trimmed)}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data?.suggestions && Array.isArray(data.suggestions)) {
+            setServerSuggestions(data.suggestions);
+          }
+        })
+        .catch(() => {});
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const handleKeyDownInInput = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (!showSuggestions) {
+        setShowSuggestions(true);
+      } else if (suggestions.length > 0) {
+        setSelectedIndex(prev => (prev < suggestions.length - 1 ? prev + 1 : 0));
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!showSuggestions) {
+        setShowSuggestions(true);
+      } else if (suggestions.length > 0) {
+        setSelectedIndex(prev => (prev > 0 ? prev - 1 : suggestions.length - 1));
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (showSuggestions && selectedIndex >= 0 && selectedIndex < suggestions.length) {
+        const selected = suggestions[selectedIndex].text;
+        onSearchChange?.(selected);
+        setShowSuggestions(false);
+        setTimeout(() => {
+          onExecuteSearch?.(e);
+        }, 0);
+      } else {
+        setShowSuggestions(false);
+        onExecuteSearch?.(e);
+      }
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false);
+      setSelectedIndex(-1);
+      searchInputRef.current?.blur();
+    }
+  };
 
   const handleReloadClick = () => {
     setIsReloadSpinning(true);
@@ -203,18 +300,14 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'all', label: 'All', icon: Search },
     { id: 'websites', label: 'Websites', icon: Globe },
     { id: 'apps', label: 'Apps', icon: Smartphone },
-    { id: 'timeline', label: '3D Timeline', icon: Clock },
-    { id: 'future', label: 'Future Horizons', icon: Compass },
-    { id: 'research', label: 'Research', icon: BookOpen },
-    { id: 'compare', label: 'Compare', icon: GitCompare },
-    { id: 'translate', label: 'Translate', icon: Languages },
     { id: 'images', label: 'Images', icon: ImageIcon },
-    { id: 'news', label: 'News', icon: Newspaper },
     { id: 'videos', label: 'Videos', icon: Video },
-    { id: 'places', label: 'Places', icon: MapPin },
+    { id: 'news', label: 'News', icon: Newspaper },
+    { id: 'social', label: 'Social', icon: Share2 },
+    { id: 'translate', label: 'Translate', icon: Languages },
     { id: 'location', label: 'Live Location', icon: Navigation },
-    { id: 'shopping', label: 'Shopping', icon: ShoppingBag },
     { id: 'chat', label: 'AI Chat', icon: Sparkles },
+    { id: 'github', label: 'GitHub', icon: Code },
   ] as const;
 
   return (
@@ -289,23 +382,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             </span>
           )}
 
-          {/* Intelligent Search/Address Bar */}
+          {/* Intelligent Search/Address Bar with Autocomplete */}
           {showSearchBar && (
-            <div className="flex items-center flex-1 max-w-xl">
+            <div ref={searchContainerRef} className="flex items-center flex-1 max-w-xl relative">
               <div className="relative w-full">
                 <input
+                  ref={searchInputRef}
                   id="antiqora-navbar-search"
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => onSearchChange?.(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      onExecuteSearch?.(e);
-                    } else if (e.key === 'Escape') {
-                      (e.target as HTMLInputElement).blur();
-                    }
+                  onChange={(e) => {
+                    onSearchChange?.(e.target.value);
+                    setShowSuggestions(true);
                   }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onKeyDown={handleKeyDownInInput}
                   placeholder="Search query, URL, or ask AI..."
                   className={`w-full rounded-xl border px-3.5 py-1.5 pl-9 pr-20 sm:pr-36 text-xs sm:text-sm shadow-sm transition ${
                     isIncognito
@@ -313,6 +404,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                       : 'border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500'
                   }`}
                   aria-label="Address and Search Bar"
+                  autoComplete="off"
                 />
                 <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400" />
                 
@@ -345,6 +437,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <button
                     onClick={(e) => {
                       e.preventDefault();
+                      setShowSuggestions(false);
                       onExecuteSearch?.(e);
                     }}
                     className="rounded-lg bg-cyan-500 px-2.5 py-0.5 text-xs font-bold text-slate-950 hover:bg-cyan-400 transition"
@@ -353,6 +446,29 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Real-time Autocomplete Suggestions Dropdown for Navbar */}
+              <SearchSuggestionsDropdown
+                isOpen={showSuggestions}
+                query={searchQuery}
+                suggestions={suggestions}
+                selectedIndex={selectedIndex}
+                onSelectSuggestion={(selectedText) => {
+                  onSearchChange?.(selectedText);
+                  setShowSuggestions(false);
+                  setTimeout(() => {
+                    onExecuteSearch?.();
+                  }, 0);
+                }}
+                onFillQuery={(fillText) => {
+                  onSearchChange?.(fillText);
+                  searchInputRef.current?.focus();
+                }}
+                onDeleteRecent={onDeleteRecent}
+                onClearRecent={onClearRecent}
+                onHoverIndex={(idx) => setSelectedIndex(idx)}
+                hasRecentSearches={recentSearches.length > 0}
+              />
             </div>
           )}
         </div>
@@ -432,6 +548,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
           )}
           
+          {/* Persistent Language Switcher */}
+          {onSelectLanguage && (
+            <LanguageSwitcher
+              currentLanguage={currentLanguage}
+              onSelectLanguage={onSelectLanguage}
+            />
+          )}
+
           <button
             onClick={onOpenAuth}
             className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/80 px-2 py-1 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:border-cyan-500/50 hover:text-cyan-600 dark:hover:text-cyan-400 transition shadow-sm"

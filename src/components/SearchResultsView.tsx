@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { SearchResultItem, summarizeSearchResult, PageSummaryResult } from '../services/api';
-import { generateAIAnswer } from '../services/api';
+import { SearchResultItem, summarizeSearchResult, PageSummaryResult, generateAIAnswer, BilingualAIAnswer } from '../services/api';
 import { settingsManager } from '../services/settingsManager';
 import { locationService } from '../services/locationService';
 import { GitHubSearchResult } from '../services/providers/GithubSearchProvider';
@@ -52,8 +51,19 @@ import {
   GitFork,
   GitPullRequest,
   BadgeCheck,
-  ShieldCheck
+  ShieldCheck,
+  Heart,
+  GraduationCap,
+  User,
+  Lock,
+  Flame,
+  Volume2,
+  VolumeX,
+  Languages,
+  BookOpen
 } from 'lucide-react';
+import { SafetyBlockedView } from './SafetyBlockedView';
+import { AgeGateModal } from './AgeGateModal';
 
 interface SearchResultsViewProps {
   query: string;
@@ -66,6 +76,7 @@ interface SearchResultsViewProps {
   onSelectTab: (tab: TabType) => void;
   onBackToHome: () => void;
   onNewSearch: () => void;
+  onExecuteSearch?: (q: string) => void;
   onSavePage: (item: any) => void;
   savedItemIds: string[];
   intentResult?: QueryIntentResult | null;
@@ -75,6 +86,17 @@ interface SearchResultsViewProps {
   githubResults?: GitHubSearchResult;
   onOpenRoadmap?: () => void;
   onOpenDocument?: () => void;
+  safetyBlocked?: boolean;
+  blockReason?: string;
+  helplines?: Array<{ name: string; contact: string; url?: string }>;
+  isAdultQuery?: boolean;
+  isRomanticQuery?: boolean;
+  categoryCounts?: Record<string, number>;
+  onSafeSearchToggle?: (mode: 'strict' | 'moderate' | 'off') => void;
+  safeSearchMode?: 'strict' | 'moderate' | 'off';
+  onAgeVerified?: (verified: boolean) => void;
+  currentLanguage?: string;
+  onSelectLanguage?: (code: string) => void;
 }
 
 export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
@@ -88,6 +110,7 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
   onSelectTab,
   onBackToHome,
   onNewSearch,
+  onExecuteSearch,
   onSavePage,
   savedItemIds,
   intentResult = null,
@@ -96,12 +119,83 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
   appsResults = [],
   githubResults = { repositories: [], issues: [], totalCount: 0, isRealApi: false },
   onOpenRoadmap,
-  onOpenDocument
+  onOpenDocument,
+  safetyBlocked = false,
+  blockReason,
+  helplines,
+  isAdultQuery = false,
+  isRomanticQuery = false,
+  categoryCounts,
+  onSafeSearchToggle,
+  safeSearchMode = 'strict',
+  onAgeVerified,
+  currentLanguage = 'en',
+  onSelectLanguage
 }) => {
+  // If safety policy violation (e.g. minors, non-consensual exploitation)
+  if (safetyBlocked) {
+    return (
+      <SafetyBlockedView
+        query={query}
+        blockReason={blockReason}
+        helplines={helplines}
+        onNewSearch={onNewSearch || onBackToHome}
+      />
+    );
+  }
+
+  const [localSearchTerm, setLocalSearchTerm] = useState(query);
+
+  useEffect(() => {
+    setLocalSearchTerm(query);
+  }, [query]);
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (localSearchTerm.trim() && onExecuteSearch) {
+      onExecuteSearch(localSearchTerm.trim());
+    }
+  };
+
+  const [isAgeVerified, setIsAgeVerified] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('antiqora_age_verified') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [showAgeGate, setShowAgeGate] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (isAdultQuery && !isAgeVerified) {
+      setShowAgeGate(true);
+    }
+  }, [isAdultQuery, isAgeVerified]);
+
+  const handleAgeConfirm = (remember: boolean) => {
+    try {
+      if (remember) {
+        localStorage.setItem('antiqora_age_verified', 'true');
+      }
+      sessionStorage.setItem('antiqora_age_verified', 'true');
+    } catch {}
+    setIsAgeVerified(true);
+    setShowAgeGate(false);
+    onAgeVerified?.(true);
+  };
+
+  const handleAgeDecline = () => {
+    setShowAgeGate(false);
+    onBackToHome();
+  };
+
   const [aiAnswer, setAiAnswer] = useState<string>("");
+  const [aiAnswerData, setAiAnswerData] = useState<BilingualAIAnswer | null>(null);
   const [aiSources, setAiSources] = useState<any[]>([]);
   const [loadingAi, setLoadingAi] = useState<boolean>(true);
   const [copied, setCopied] = useState<boolean>(false);
+  const [copiedSection, setCopiedSection] = useState<'query' | 'en' | 'all' | null>(null);
+  const [speakingLanguage, setSpeakingLanguage] = useState<'query' | 'en' | null>(null);
   const [showFollowUpInput, setShowFollowUpInput] = useState<boolean>(false);
   const [followUpQuery, setFollowUpQuery] = useState<string>("");
   const [sortBy, setSortBy] = useState<"relevance" | "date" | "distance">("relevance");
@@ -228,11 +322,14 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
         { title: "ANTIQORA Knowledge Index", domain: "antiqora.internal", url: "https://antiqora.internal/source-1" },
         { title: "Technical Knowledge Graph", domain: "research-graph.org", url: "https://research-graph.org/source-2" }
       ];
-      const data = await generateAIAnswer(query, sources);
+      const data = await generateAIAnswer(query, sources, currentLanguage);
       setAiAnswer(data.answer);
-      setAiSources(sources);
+      setAiAnswerData(data);
+      setAiSources(data.sources && data.sources.length > 0 ? data.sources : sources);
     } catch {
-      setAiAnswer(`Synthesized answer for "${query}": Key developments in this domain highlight advancements across distributed computation, neural retrieval methods, and verifiable data architectures.`);
+      const fallback = `Synthesized answer for "${query}": Key developments in this domain highlight advancements across distributed computation, neural retrieval methods, and verifiable data architectures.`;
+      setAiAnswer(fallback);
+      setAiAnswerData(null);
       setAiSources([
         { title: "Knowledge Index", domain: "sources.antiqora.io", url: "#" },
         { title: "Research Reference", domain: "research.antiqora.io", url: "#" }
@@ -246,7 +343,7 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
     if (query) {
       fetchAiOverview();
     }
-  }, [query]);
+  }, [query, currentLanguage]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -319,11 +416,40 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
     });
   }, [universalApps, appsResults, appPlatformFilter, appCategoryFilter]);
 
-  const handleCopyAnswer = () => {
-    if (!aiAnswer) return;
-    navigator.clipboard.writeText(aiAnswer);
+  const handleSpeak = (text: string, langCode: string, target: 'query' | 'en') => {
+    if (!('speechSynthesis' in window)) return;
+    if (speakingLanguage === target) {
+      window.speechSynthesis.cancel();
+      setSpeakingLanguage(null);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = langCode;
+    utterance.rate = 0.95;
+    utterance.onend = () => setSpeakingLanguage(null);
+    utterance.onerror = () => setSpeakingLanguage(null);
+    setSpeakingLanguage(target);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleCopyAnswer = (type: 'query' | 'en' | 'all' = 'all') => {
+    let textToCopy = aiAnswer;
+    if (type === 'query' && aiAnswerData?.queryLanguageExplanation) {
+      textToCopy = aiAnswerData.queryLanguageExplanation;
+    } else if (type === 'en' && aiAnswerData?.englishExplanation) {
+      textToCopy = aiAnswerData.englishExplanation;
+    } else if (type === 'all' && aiAnswerData?.queryLanguageExplanation && aiAnswerData?.englishExplanation) {
+      textToCopy = `[${aiAnswerData.detectedLanguage?.name || 'Native Language'}]:\n${aiAnswerData.queryLanguageExplanation}\n\n[English Explanation]:\n${aiAnswerData.englishExplanation}`;
+    }
+    if (!textToCopy) return;
+    navigator.clipboard.writeText(textToCopy);
+    setCopiedSection(type);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => {
+      setCopied(false);
+      setCopiedSection(null);
+    }, 2000);
   };
 
   const handleFollowUpSubmit = async (e: React.FormEvent) => {
@@ -337,6 +463,7 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
       ];
       const data = await generateAIAnswer(`${query} -> Follow-up: ${followUpQuery}`, sources);
       setAiAnswer(data.answer);
+      setAiAnswerData(data);
       setFollowUpQuery("");
       setShowFollowUpInput(false);
     } catch {
@@ -359,8 +486,34 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
     return () => window.removeEventListener('antiqora:geolocation-updated', handleGeo as EventListener);
   }, []);
 
+  const isSocialDomain = (domain: string = '') => {
+    const d = domain.toLowerCase();
+    return d.includes('twitter') || d.includes('x.com') || d.includes('instagram') || d.includes('reddit') || d.includes('quora') || d.includes('facebook') || d.includes('linkedin') || d.includes('tiktok') || d.includes('youtube');
+  };
+
   const sortedResults = useMemo(() => {
-    const items = [...results].map((item, idx) => {
+    let sourceResults = [...results];
+    if (currentTab === 'articles') {
+      const filtered = sourceResults.filter(r => r.category === 'articles');
+      if (filtered.length > 0) sourceResults = filtered;
+    } else if (currentTab === 'health-education') {
+      const filtered = sourceResults.filter(r => r.category === 'health-education');
+      if (filtered.length > 0) sourceResults = filtered;
+    } else if (currentTab === 'dating-relationships') {
+      const filtered = sourceResults.filter(r => r.category === 'dating-relationships');
+      if (filtered.length > 0) sourceResults = filtered;
+    } else if (currentTab === 'social') {
+      const filtered = sourceResults.filter(r => r.category === 'social' || isSocialDomain(r.domain));
+      if (filtered.length > 0) sourceResults = filtered;
+    } else if (currentTab === 'people') {
+      const filtered = sourceResults.filter(r => r.category === 'people');
+      if (filtered.length > 0) sourceResults = filtered;
+    } else if (currentTab === 'news') {
+      const filtered = sourceResults.filter(r => r.category === 'news');
+      if (filtered.length > 0) sourceResults = filtered;
+    }
+
+    const items = sourceResults.map((item, idx) => {
       const targetCoords = (item as any).mapCoords || {
         lat: userCoords.lat + (((idx * 17) % 50) - 25) * 0.005,
         lng: userCoords.lng + (((idx * 31) % 50) - 25) * 0.005
@@ -388,22 +541,61 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
     return items;
   }, [results, sortBy, currentTab, proximityRadius, userCoords]);
 
+  const dynamicCategories = useMemo(() => {
+    const articlesCount = results.filter(r => r.category === 'articles').length;
+    const healthEducationCount = results.filter(r => r.category === 'health-education').length;
+    const datingRelationshipsCount = results.filter(r => r.category === 'dating-relationships').length;
+    const socialCount = results.filter(r => r.category === 'social' || isSocialDomain(r.domain)).length;
+    const peopleCount = personEntity ? 1 : results.filter(r => r.category === 'people').length;
+    const newsCount = results.filter(r => r.category === 'news').length;
+
+    const list: Array<{ id: TabType; label: string; icon: React.ReactNode; badge?: string; count: number }> = [
+      { id: 'all', label: 'All', icon: <Globe className="w-3.5 h-3.5" />, count: results.length },
+      { id: 'websites', label: 'Websites', icon: <Globe className="w-3.5 h-3.5" />, badge: 'Official', count: websitesResults?.length || 0 },
+      { id: 'apps', label: 'Apps', icon: <Smartphone className="w-3.5 h-3.5" />, badge: 'Store', count: appsResults?.length || 0 },
+      { id: 'images', label: 'Images', icon: <Layers className="w-3.5 h-3.5" />, count: categoryCounts?.images ?? 8 },
+      { id: 'videos', label: 'Videos', icon: <Video className="w-3.5 h-3.5" />, count: categoryCounts?.videos ?? 6 },
+      { id: 'news', label: 'News', icon: <Newspaper className="w-3.5 h-3.5" />, count: newsCount },
+      { id: 'social', label: 'Social', icon: <Share2 className="w-3.5 h-3.5" />, count: socialCount },
+      { id: 'people', label: 'People', icon: <User className="w-3.5 h-3.5" />, count: peopleCount },
+      { id: 'articles', label: 'Articles', icon: <FileText className="w-3.5 h-3.5" />, count: articlesCount },
+      { id: 'health-education', label: 'Health & Education', icon: <GraduationCap className="w-3.5 h-3.5" />, count: healthEducationCount },
+      { id: 'dating-relationships', label: 'Dating & Romance', icon: <Heart className="w-3.5 h-3.5" />, count: datingRelationshipsCount },
+      { id: 'ai', label: 'AI', icon: <Sparkles className="w-3.5 h-3.5" />, count: 1 },
+      { id: 'github', label: 'GitHub', icon: <Code className="w-3.5 h-3.5" />, badge: 'Repos', count: githubResults?.repositories?.length || 0 },
+    ];
+
+    // Empty categories ko hide karo - Requirement 6
+    return list.filter(cat => cat.id === 'all' || cat.count > 0);
+  }, [results, categoryCounts, personEntity, websitesResults, appsResults, githubResults]);
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 space-y-6">
       
       {/* Top Header: Navigation & Status Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800/80 pb-4">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
           <button
             onClick={onBackToHome}
-            className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition shadow-sm"
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition shadow-sm flex-shrink-0"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>Back to Home</span>
           </button>
 
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            About <span className="text-slate-800 dark:text-slate-200 font-semibold">{totalResults}</span> results for <span className="text-cyan-600 dark:text-cyan-400 font-medium">"{query}"</span>
+          <form onSubmit={handleSearchSubmit} className="relative flex-1 max-w-sm">
+            <input
+              type="text"
+              value={localSearchTerm}
+              onChange={(e) => setLocalSearchTerm(e.target.value)}
+              placeholder="Search anything..."
+              className="w-full rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3.5 py-1.5 pl-8 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-500 shadow-sm"
+            />
+            <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-slate-400" />
+          </form>
+
+          <span className="hidden lg:inline text-xs text-slate-500 dark:text-slate-400">
+            About <span className="text-slate-800 dark:text-slate-200 font-semibold">{totalResults}</span> results
           </span>
         </div>
 
@@ -483,52 +675,29 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
         </div>
       )}
 
-      {/* Top Search Category Pills Bar (ALL, AI, WEBSITES, APPS, IMAGES, VIDEOS, NEWS, MAPS, SHOPPING, RESEARCH, DOCUMENTS) */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 no-scrollbar text-xs">
-        {[
-          { id: 'all' as TabType, label: 'All', icon: <Globe className="w-3.5 h-3.5" /> },
-          { id: 'ai' as TabType, label: 'AI', icon: <Sparkles className="w-3.5 h-3.5" /> },
-          { id: 'websites' as TabType, label: 'Websites', icon: <Globe className="w-3.5 h-3.5" />, badge: 'Official' },
-          { id: 'apps' as TabType, label: 'Apps', icon: <Smartphone className="w-3.5 h-3.5" />, badge: 'Store' },
-          { id: 'images' as TabType, label: 'Images', icon: <Layers className="w-3.5 h-3.5" /> },
-          { id: 'videos' as TabType, label: 'Videos', icon: <Video className="w-3.5 h-3.5" /> },
-          { id: 'news' as TabType, label: 'News', icon: <Newspaper className="w-3.5 h-3.5" /> },
-          { id: 'places' as TabType, label: 'Maps', icon: <MapPin className="w-3.5 h-3.5" /> },
-          { id: 'location' as TabType, label: 'Live Location', icon: <Navigation className="w-3.5 h-3.5" /> },
-          { id: 'shopping' as TabType, label: 'Shopping', icon: <ShoppingBag className="w-3.5 h-3.5" /> },
-          { id: 'github' as TabType, label: 'GitHub', icon: <Code className="w-3.5 h-3.5" />, badge: 'Repos' },
-          { id: 'research' as TabType, label: 'Research', icon: <Layers className="w-3.5 h-3.5" /> },
-          { id: 'documents' as TabType, label: 'Documents', icon: <FileText className="w-3.5 h-3.5" /> },
-        ].map(cat => {
-          const isActive = currentTab === cat.id;
-          return (
-            <button
-              key={cat.id}
-              onClick={() => {
-                if (cat.id === 'documents' && onOpenDocument) {
-                  onOpenDocument();
-                } else {
-                  onSelectTab(cat.id);
-                }
-              }}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-2xl font-semibold transition flex-shrink-0 border ${
-                isActive
-                  ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-500/15'
-                  : 'bg-white dark:bg-slate-900/80 border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/30'
-              }`}
-            >
-              {cat.icon}
-              <span>{cat.label}</span>
-              {cat.badge && (
-                <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold ${
-                  isActive ? 'bg-slate-950/20 text-slate-950' : 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20'
-                }`}>
-                  {cat.badge}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      {/* SafeSearch Mode Indicator & Fast Toggle */}
+      <div className="flex items-center justify-end gap-3 pb-2 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            id="safesearch-toggle-button"
+            onClick={() => {
+              const nextMode = safeSearchMode === 'strict' ? 'moderate' : safeSearchMode === 'moderate' ? 'off' : 'strict';
+              onSafeSearchToggle?.(nextMode);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
+              safeSearchMode === 'strict'
+                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25'
+                : safeSearchMode === 'moderate'
+                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25'
+                : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/30 font-bold'
+            }`}
+            title="Toggle SafeSearch between Strict (Minor Safe), Moderate, and Adult Search Mode"
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">SafeSearch:</span>
+            <span className="capitalize">{safeSearchMode === 'off' ? '18+ Adult Mode' : safeSearchMode}</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Results Layout */}
@@ -978,12 +1147,12 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
           {(currentTab === 'all' || currentTab === 'ai') && (
             <>
               {/* AI ANSWER SECTION ("Ask ANTIQORA") */}
-              <div className="relative rounded-2xl border border-cyan-500/40 bg-gradient-to-b from-cyan-500/5 via-white dark:via-slate-900/90 to-white dark:to-slate-950/90 backdrop-blur-xl p-6 shadow-xl shadow-cyan-500/5">
+              <div className="relative rounded-2xl border border-cyan-500/40 bg-gradient-to-b from-cyan-500/5 via-white dark:via-slate-900/90 to-white dark:to-slate-950/90 backdrop-blur-xl p-5 sm:p-6 shadow-xl shadow-cyan-500/5">
             
-            {/* Corner Badge */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-lg bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 flex items-center justify-center font-black text-sm">
+            {/* Header with Language Detection Badges */}
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 flex items-center justify-center font-black text-sm shadow-inner">
                   A
                 </div>
                 <div>
@@ -991,32 +1160,188 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                     <span>Ask ANTIQORA</span>
                   </h2>
                   <p className="text-[11px] font-semibold text-cyan-600 dark:text-cyan-400">
-                    AI Knowledge Synthesis & Deep Analysis
+                    Bilingual Cognitive Knowledge Synthesis & Deep Analysis
                   </p>
                 </div>
               </div>
 
-              <span className="inline-flex items-center gap-1 rounded-full bg-cyan-500/10 px-2.5 py-0.5 text-[10px] font-bold text-cyan-600 dark:text-cyan-300 border border-cyan-500/30">
-                <Sparkles className="w-3 h-3" />
-                AI Synthesizer
-              </span>
+              <div className="flex items-center gap-2">
+                {aiAnswerData?.detectedLanguage && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 px-2.5 py-1 text-[11px] font-bold text-cyan-600 dark:text-cyan-300 border border-cyan-500/30">
+                    <Languages className="w-3.5 h-3.5" />
+                    <span>{aiAnswerData.detectedLanguage.nativeName} ({aiAnswerData.detectedLanguage.name})</span>
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 rounded-full bg-cyan-500/10 px-2.5 py-1 text-[10px] font-bold text-cyan-600 dark:text-cyan-300 border border-cyan-500/30">
+                  <Sparkles className="w-3 h-3" />
+                  AI Synthesizer
+                </span>
+              </div>
             </div>
 
             {loadingAi ? (
-              <div className="py-8 flex flex-col items-center justify-center space-y-3">
-                <div className="w-6 h-6 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                <p className="text-xs text-slate-500 dark:text-slate-400">Synthesizing answer for "{query}"...</p>
+              <div className="py-10 flex flex-col items-center justify-center space-y-3">
+                <div className="w-7 h-7 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">Synthesizing multilingual answer for "{query}"...</p>
+                <p className="text-[11px] text-slate-400">Generating native language explanation + English translation...</p>
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">
-                  {aiAnswer}
-                </div>
+                {/* Check if bilingual explanation is available (native + english) */}
+                {aiAnswerData?.queryLanguageExplanation && aiAnswerData?.englishExplanation && !aiAnswerData?.detectedLanguage?.isEnglish ? (
+                  <div className="space-y-4">
+                    {/* 1. NATIVE LANGUAGE EXPLANATION (jis language me search kiya) */}
+                    <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 dark:bg-cyan-950/20 p-4 transition">
+                      <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-cyan-500/20">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-cyan-500/20 text-xs font-bold text-cyan-600 dark:text-cyan-400">
+                            1
+                          </span>
+                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                            {aiAnswerData.detectedLanguage?.nativeName || aiAnswerData.detectedLanguage?.name} में व्याख्या (Query Language Explanation)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleSpeak(aiAnswerData.queryLanguageExplanation!, aiAnswerData.detectedLanguage?.code || 'hi-IN', 'query')}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-cyan-500/10 transition"
+                            title="Listen in native language"
+                          >
+                            {speakingLanguage === 'query' ? <VolumeX className="w-3.5 h-3.5 text-cyan-500" /> : <Volume2 className="w-3.5 h-3.5" />}
+                            <span>{speakingLanguage === 'query' ? 'Stop' : 'Listen'}</span>
+                          </button>
+                          <button
+                            onClick={() => handleCopyAnswer('query')}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-cyan-500/10 transition"
+                            title="Copy native explanation"
+                          >
+                            {copied && copiedSection === 'query' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copied && copiedSection === 'query' ? 'Copied' : 'Copy'}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="text-sm text-slate-800 dark:text-slate-200 leading-relaxed font-medium whitespace-pre-line">
+                        {aiAnswerData.queryLanguageExplanation}
+                      </p>
+
+                      {aiAnswerData.keyPointsQueryLang && aiAnswerData.keyPointsQueryLang.length > 0 && (
+                        <div className="mt-3 pt-2.5 border-t border-cyan-500/15">
+                          <p className="text-[11px] font-bold text-cyan-700 dark:text-cyan-300 mb-1.5 uppercase tracking-wider">
+                            मुख्य बिंदु (Key Highlights):
+                          </p>
+                          <ul className="space-y-1 text-xs text-slate-700 dark:text-slate-300">
+                            {aiAnswerData.keyPointsQueryLang.map((point, idx) => (
+                              <li key={idx} className="flex items-start gap-2">
+                                <span className="text-cyan-500 font-bold mt-0.5">•</span>
+                                <span>{point}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Visual Connector / Transition Line */}
+                    <div className="relative py-1 flex items-center justify-center">
+                      <div className="absolute inset-0 flex items-center">
+                        <div className="w-full border-t border-dashed border-slate-300 dark:border-slate-700" />
+                      </div>
+                      <div className="relative bg-white dark:bg-slate-900 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-800 text-[11px] font-semibold text-slate-600 dark:text-slate-400 flex items-center gap-1.5 shadow-xs">
+                        <span className="text-cyan-500">↓</span>
+                        <span>English Explanation / अंग्रेजी में पूर्ण विवरण</span>
+                      </div>
+                    </div>
+
+                    {/* 2. ENGLISH EXPLANATION DIRECTLY BELOW (usi ke niche english me explanation) */}
+                    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-4 transition shadow-xs">
+                      <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-100 dark:border-slate-800">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300">
+                            2
+                          </span>
+                          <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                            English Technical & Comprehensive Breakdown
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleSpeak(aiAnswerData.englishExplanation!, 'en-US', 'en')}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                            title="Listen in English"
+                          >
+                            {speakingLanguage === 'en' ? <VolumeX className="w-3.5 h-3.5 text-cyan-500" /> : <Volume2 className="w-3.5 h-3.5" />}
+                            <span>{speakingLanguage === 'en' ? 'Stop' : 'Listen'}</span>
+                          </button>
+                          <button
+                            onClick={() => handleCopyAnswer('en')}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                            title="Copy English explanation"
+                          >
+                            {copied && copiedSection === 'en' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copied && copiedSection === 'en' ? 'Copied' : 'Copy'}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <p className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+                        {aiAnswerData.englishExplanation}
+                      </p>
+
+                      {aiAnswerData.keyPointsEnglish && aiAnswerData.keyPointsEnglish.length > 0 && (
+                        <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800">
+                          <p className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
+                            Key Takeaways & Concepts:
+                          </p>
+                          <ul className="space-y-1 text-xs text-slate-700 dark:text-slate-300">
+                            {aiAnswerData.keyPointsEnglish.map((point, idx) => (
+                              <li key={idx} className="flex items-start gap-2">
+                                <span className="text-cyan-500 font-bold mt-0.5">•</span>
+                                <span>{point}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* Standard / Single-Language View (English or Fallback) */
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between pb-1">
+                      <span className="text-xs font-bold text-slate-600 dark:text-slate-400">
+                        Synthesized Knowledge Overview
+                      </span>
+                      <button
+                        onClick={() => handleSpeak(aiAnswer, 'en-US', 'en')}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                      >
+                        {speakingLanguage === 'en' ? <VolumeX className="w-3.5 h-3.5 text-cyan-500" /> : <Volume2 className="w-3.5 h-3.5" />}
+                        <span>{speakingLanguage === 'en' ? 'Stop' : 'Listen'}</span>
+                      </button>
+                    </div>
+                    <div className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-line">
+                      {aiAnswer}
+                    </div>
+                    {aiAnswerData?.keyPointsEnglish && aiAnswerData.keyPointsEnglish.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                        <ul className="space-y-1 text-xs text-slate-600 dark:text-slate-400">
+                          {aiAnswerData.keyPointsEnglish.map((pt, i) => (
+                            <li key={i} className="flex items-start gap-2">
+                              <span className="text-cyan-500 font-bold">•</span>
+                              <span>{pt}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Sources Section */}
                 <div className="pt-3 border-t border-slate-200 dark:border-slate-800/80">
                   <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">
-                    Sources:
+                    Verified Citations & Sources:
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {aiSources.map((src, i) => (
@@ -1042,11 +1367,11 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                   </button>
 
                   <button
-                    onClick={handleCopyAnswer}
+                    onClick={() => handleCopyAnswer('all')}
                     className="flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 hover:border-cyan-500/40 transition"
                   >
-                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copied ? 'Copied!' : 'Copy answer'}</span>
+                    {copied && copiedSection === 'all' ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copied && copiedSection === 'all' ? 'Copied Both!' : 'Copy Answer'}</span>
                   </button>
 
                   <button
@@ -1241,6 +1566,17 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                               <span>Verified</span>
                             </span>
                           )}
+
+                          {/* 18+ Mature Badge */}
+                          {item.isAdult && (
+                            <span 
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/25 px-2.5 py-0.5 rounded-md"
+                              aria-label="18+ Mature Content"
+                            >
+                              <Lock className="w-3 h-3 text-rose-500 shrink-0" />
+                              <span>18+ Mature</span>
+                            </span>
+                          )}
                         </div>
 
                         {/* Strictly Separated Metadata Row */}
@@ -1309,9 +1645,10 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                             target="_blank"
                             rel="noopener noreferrer"
                             className="flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-cyan-500 hover:text-slate-950 transition-all shadow-2xs"
-                            title="Open web page"
+                            title="Open web page directly"
                           >
-                            <span>Open</span>
+                            <span className="hidden sm:inline">Open Website</span>
+                            <span className="sm:hidden">Open</span>
                             <ExternalLink className="w-3.5 h-3.5" />
                           </a>
                         ) : (
@@ -1320,7 +1657,8 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
                             className="flex items-center gap-1.5 rounded-xl bg-slate-100 dark:bg-slate-800/90 px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-cyan-500 hover:text-slate-950 transition-all shadow-2xs"
                             title="Open page reader"
                           >
-                            <span>Open</span>
+                            <span className="hidden sm:inline">Open Website</span>
+                            <span className="sm:hidden">Open</span>
                             <ExternalLink className="w-3.5 h-3.5" />
                           </button>
                         )}
@@ -1675,6 +2013,18 @@ export const SearchResultsView: React.FC<SearchResultsViewProps> = ({
           </button>
         </div>
       )}
+
+      {/* 18+ Age Gate Confirmation Modal */}
+      <AgeGateModal
+        isOpen={showAgeGate}
+        query={query}
+        onConfirmAdult={handleAgeConfirm}
+        onKeepSafeSearch={() => {
+          setShowAgeGate(false);
+          onSafeSearchToggle?.('strict');
+        }}
+        onClose={handleAgeDecline}
+      />
 
     </div>
   );

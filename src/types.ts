@@ -18,7 +18,12 @@ export type TabType =
   | 'future' 
   | 'translate' 
   | 'compare' 
-  | 'chat';
+  | 'chat'
+  | 'social'
+  | 'people'
+  | 'articles'
+  | 'health-education'
+  | 'dating-relationships';
 
 export type AnswerDepth = 'simple' | 'standard' | 'detailed' | 'expert';
 
@@ -87,6 +92,12 @@ export interface BrowserTab {
   appsResults?: any[];
   isSearchLoading?: boolean;
   searchError?: string | null;
+  safetyBlocked?: boolean;
+  safetyBlockReason?: string;
+  safetyHelplines?: Array<{ name: string; contact: string; url?: string }>;
+  isAdultQuery?: boolean;
+  isRomanticQuery?: boolean;
+  categoryCounts?: Record<string, number>;
   createdAt?: number;
   history?: { query: string; tab: TabType; title?: string; url?: string }[];
   historyStack?: string[];

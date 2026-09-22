@@ -116,10 +116,22 @@ export function computeSuggestions(
   const results: SuggestionItem[] = [];
   const seen = new Set<string>();
 
-  // 1. Matching Recent Searches
+  // 1. Matching Recent Searches (Prefix matches first, then substring matches)
+  const recentPrefixMatches: string[] = [];
+  const recentSubstringMatches: string[] = [];
+
   recentSearches.forEach((r) => {
     const lower = r.toLowerCase();
-    if (lower.includes(trimmed)) {
+    if (lower.startsWith(trimmed)) {
+      recentPrefixMatches.push(r);
+    } else if (lower.includes(trimmed)) {
+      recentSubstringMatches.push(r);
+    }
+  });
+
+  [...recentPrefixMatches, ...recentSubstringMatches].forEach((r) => {
+    const lower = r.toLowerCase();
+    if (!seen.has(lower)) {
       results.push({
         id: `recent-${r}`,
         text: r,

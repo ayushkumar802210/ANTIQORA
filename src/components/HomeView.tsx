@@ -91,6 +91,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   // Real API State (weather, news, trending)
   const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [isLoadingWeather, setIsLoadingWeather] = useState(false);
   const [trendingList, setTrendingList] = useState<TrendingItem[]>([]);
   const [newsList, setNewsList] = useState<NewsItem[]>([]);
 
@@ -102,49 +103,53 @@ export const HomeView: React.FC<HomeViewProps> = ({
     return computeSuggestions(query, recentSearches, serverSuggestions);
   }, [query, recentSearches, serverSuggestions]);
 
-  // Fetch Real Weather Data if permitted
-  useEffect(() => {
-    let isMounted = true;
-
-    const fetchWeather = async (lat?: number, lon?: number) => {
-      try {
-        const url = lat && lon 
-          ? `/api/weather?lat=${lat}&lon=${lon}`
-          : `/api/weather`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.available && isMounted) {
-            setWeather({
-              city: data.city || 'Local Area',
-              temperature: data.temperature ?? 24,
-              unit: data.unit || '°C',
-              condition: data.condition || 'Clear',
-              windSpeed: data.windSpeed ?? 10,
-              weatherCode: data.weatherCode ?? 0
-            });
-          }
+  // Fetch Real Weather Data using GPS Live Location or IP fallback
+  const fetchWeather = async (lat?: number, lon?: number) => {
+    try {
+      setIsLoadingWeather(true);
+      const url = lat && lon 
+        ? `/api/weather?lat=${lat}&lon=${lon}`
+        : `/api/weather`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.available) {
+          setWeather({
+            city: data.city || 'Live Location',
+            temperature: data.temperature ?? 24,
+            unit: data.unit || '°C',
+            condition: data.condition || 'Clear',
+            windSpeed: data.windSpeed ?? 10,
+            weatherCode: data.weatherCode ?? 0
+          });
         }
-      } catch (err) {
-        // Silently fail & hide weather card
       }
-    };
+    } catch (err) {
+      // Silently fail
+    } finally {
+      setIsLoadingWeather(false);
+    }
+  };
 
+  const handleDetectLiveLocation = () => {
     if (navigator.geolocation) {
+      setIsLoadingWeather(true);
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           fetchWeather(pos.coords.latitude, pos.coords.longitude);
         },
         () => {
-          fetchWeather(); // Fallback to IP / server location
+          fetchWeather(); // Fallback to IP location
         },
-        { timeout: 5000 }
+        { timeout: 10000, enableHighAccuracy: true }
       );
     } else {
       fetchWeather();
     }
+  };
 
-    return () => { isMounted = false; };
+  useEffect(() => {
+    handleDetectLiveLocation();
   }, []);
 
   // Fetch Real Trending Searches from Backend (Google Trends RSS)
@@ -468,17 +473,29 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <div className="w-full max-w-2xl mb-6 p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/60 dark:bg-slate-900/50 backdrop-blur-md flex items-center justify-between text-xs text-slate-700 dark:text-slate-300 shadow-2xs">
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500">
-                <CloudSun className="w-5 h-5" />
+                <CloudSun className={`w-5 h-5 ${isLoadingWeather ? 'animate-spin' : ''}`} />
               </div>
               <div>
-                <p className="font-bold text-slate-900 dark:text-slate-100">{weather.city}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="font-bold text-slate-900 dark:text-slate-100">{weather.city}</p>
+                  <button
+                    type="button"
+                    onClick={handleDetectLiveLocation}
+                    title="Update to Live GPS Location"
+                    className="p-1 rounded-md text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500/10 transition"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                  </button>
+                </div>
                 <p className="text-slate-500 text-[11px]">{weather.condition}</p>
               </div>
             </div>
 
             <div className="flex items-center gap-4">
               <div className="text-right">
-                <span className="text-lg font-black text-cyan-600 dark:text-cyan-400">{weather.temperature}{weather.unit}</span>
+                <span className="text-lg font-black text-cyan-600 dark:text-cyan-400">
+                  {isLoadingWeather ? '...' : `${weather.temperature}${weather.unit}`}
+                </span>
               </div>
               <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-400 border-l border-slate-200 dark:border-slate-800 pl-3">
                 <span className="flex items-center gap-1"><Wind className="w-3 h-3 text-cyan-500" /> {weather.windSpeed} km/h</span>

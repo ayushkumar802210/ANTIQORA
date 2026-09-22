@@ -273,6 +273,17 @@ export default function App() {
   const [websitesResults, setWebsitesResults] = useState<OfficialWebsiteResult[]>([]);
   const [appsResults, setAppsResults] = useState<AppResult[]>([]);
 
+  // Safety & Adult Search Mode state
+  const [safetyBlocked, setSafetyBlocked] = useState(false);
+  const [blockReason, setBlockReason] = useState<string | undefined>(undefined);
+  const [helplines, setHelplines] = useState<Array<{ name: string; contact: string; url?: string }> | undefined>(undefined);
+  const [isAdultQuery, setIsAdultQuery] = useState(false);
+  const [isRomanticQuery, setIsRomanticQuery] = useState(false);
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number> | undefined>(undefined);
+  const [safeSearchMode, setSafeSearchMode] = useState<'strict' | 'moderate' | 'off'>(() => {
+    return (localStorage.getItem('antiqora_safesearch_mode') as any) || 'strict';
+  });
+
   // Local Storage Persistence
   useEffect(() => { localStorage.setItem('antiqora_browser_tabs', JSON.stringify(tabs)); }, [tabs]);
   useEffect(() => { localStorage.setItem('antiqora_closed_tabs', JSON.stringify(closedTabs)); }, [closedTabs]);
@@ -321,6 +332,42 @@ export default function App() {
   const handleStartupComplete = useCallback(() => {
     setShowStartup(false);
     sessionStorage.setItem('antiqora_startup_seen', 'true');
+  }, []);
+
+  // URL & Browser History State Synchronization
+  useEffect(() => {
+    const parseAndRunUrlSearch = () => {
+      if (typeof window === 'undefined') return;
+      const params = new URLSearchParams(window.location.search);
+      const qParam = params.get('q');
+      const tabParam = params.get('tab') as TabType | null;
+
+      if (qParam && qParam.trim()) {
+        const query = qParam.trim();
+        const tab = tabParam || 'all';
+        handleUpdateTab(activeTabId, {
+          query,
+          searchQuery: query,
+          activeQuery: query,
+          currentSubTab: tab,
+          currentTab: tab,
+        });
+        executeSearch(query, tab);
+      }
+    };
+
+    // Run initial URL check if query exists
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('q')) {
+      parseAndRunUrlSearch();
+    }
+
+    const handlePopState = () => {
+      parseAndRunUrlSearch();
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   // TAB ACTIONS
@@ -412,15 +459,23 @@ export default function App() {
   }, []);
 
   // SEARCH EXECUTION
-  const executeSearch = async (queryText: string, targetTab: TabType = 'all', e?: React.FormEvent | React.MouseEvent | React.KeyboardEvent | Event) => {
-    if (e) {
-      e.preventDefault();
+  const executeSearch = async (
+    queryText: string, 
+    targetTab: TabType = 'all', 
+    eOrSafeMode?: React.FormEvent | React.MouseEvent | React.KeyboardEvent | Event | 'strict' | 'moderate' | 'off',
+    overrideSafeSearch?: 'strict' | 'moderate' | 'off'
+  ) => {
+    if (eOrSafeMode && typeof eOrSafeMode !== 'string' && 'preventDefault' in eOrSafeMode) {
+      eOrSafeMode.preventDefault();
     }
     const trimmed = queryText.trim();
     if (!trimmed) return;
     
     setIsSearchLoading(true);
     setSearchError(null);
+
+    const safeModeFromArg = typeof eOrSafeMode === 'string' ? eOrSafeMode : overrideSafeSearch;
+    const effectiveSafeMode = safeModeFromArg || safeSearchMode || 'strict';
 
     let isUrl = false;
     if (/^(https?:\/\/)?([\w-]+\.)+[\w-]+(\/.*)?$/i.test(trimmed)) {
@@ -446,6 +501,19 @@ export default function App() {
       historyIndex: newStack.length - 1
     });
 
+    if (typeof window !== 'undefined' && window.history) {
+      const searchParams = new URLSearchParams();
+      searchParams.set('q', trimmed);
+      const effectiveTab = targetTab === 'home' ? 'all' : targetTab;
+      if (effectiveTab && effectiveTab !== 'all') {
+        searchParams.set('tab', effectiveTab);
+      }
+      const newPath = `/search?${searchParams.toString()}`;
+      if (window.location.search !== `?${searchParams.toString()}`) {
+        window.history.pushState({ q: trimmed, tab: effectiveTab }, '', newPath);
+      }
+    }
+
     if (!activeTab.isIncognito) {
       trendingSearchesService.recordQueryUsage(trimmed);
 
@@ -465,10 +533,10 @@ export default function App() {
 
     try {
       const [webRes, imgRes, newsRes, vidRes, placeRes, prodRes, overviewRes, intentRes, sitesRes, appsRes, githubRes, googleRes] = await Promise.all([
-        searchWeb(trimmed),
+        searchWeb(trimmed, 'all', effectiveSafeMode),
         searchImages(trimmed),
         searchNews(),
-        searchVideos(trimmed),
+        searchVideos(trimmed, effectiveSafeMode),
         searchPlaces(trimmed),
         searchProducts(trimmed),
         get3DOverview(trimmed, settings.aiAnswerStyle, settings.interfaceLanguage),
@@ -479,16 +547,33 @@ export default function App() {
         GoogleSearchProvider.search(trimmed)
       ]);
 
-      const combinedWeb = [...webRes.results];
-      if (googleRes?.results?.length) {
-        const existingUrls = new Set(combinedWeb.map(r => r.url));
-        googleRes.results.forEach(gItem => {
-          if (!existingUrls.has(gItem.url)) combinedWeb.push(gItem);
-        });
+      if (webRes.isBlocked) {
+        setSafetyBlocked(true);
+        setBlockReason(webRes.blockReason);
+        setHelplines(webRes.helplines);
+        setIsAdultQuery(Boolean(webRes.isAdultQuery));
+        setWebResults([]);
+        setTotalResults(0);
+      } else {
+        setSafetyBlocked(false);
+        setBlockReason(undefined);
+        setHelplines(undefined);
+        setIsAdultQuery(Boolean(webRes.isAdultQuery));
+        setIsRomanticQuery(Boolean(webRes.isRomanticQuery));
+        setCategoryCounts(webRes.categoryCounts);
+
+        const combinedWeb = [...webRes.results];
+        if (googleRes?.results?.length) {
+          const existingUrls = new Set(combinedWeb.map(r => r.url));
+          googleRes.results.forEach(gItem => {
+            if (!existingUrls.has(gItem.url)) combinedWeb.push(gItem);
+          });
+        }
+
+        setWebResults(combinedWeb);
+        setTotalResults(combinedWeb.length || webRes.totalResults);
       }
 
-      setWebResults(combinedWeb);
-      setTotalResults(combinedWeb.length || webRes.totalResults);
       setImages(imgRes);
       setNews(newsRes);
       setVideos(vidRes);
@@ -509,6 +594,17 @@ export default function App() {
       setIsSearchLoading(false);
     }
   };
+
+  const handleLanguageChange = useCallback((newLangCode: string) => {
+    setCurrentLanguage(newLangCode);
+    settingsManager.updateSetting('interfaceLanguage', newLangCode);
+    
+    // If on search results page with active query, dynamically refresh results & explanations for newly selected language
+    const q = activeTab.query || activeTab.searchQuery || activeQuery;
+    if (q && currentTab !== 'home') {
+      executeSearch(q, currentTab);
+    }
+  }, [activeTab.query, activeTab.searchQuery, activeQuery, currentTab]);
 
   const handleReload = useCallback(() => {
     const q = activeTab.query || activeTab.searchQuery;
@@ -828,11 +924,14 @@ export default function App() {
             onOpenVisual={() => setIsVisualOpen(true)}
             onOpenDocument={() => setIsDocOpen(true)}
             currentLanguage={currentLanguage}
-            onSelectLanguage={setCurrentLanguage}
+            onSelectLanguage={handleLanguageChange}
+            recentSearches={recentSearches}
+            onDeleteRecent={(q) => setRecentSearches(prev => prev.filter(r => r !== q))}
+            onClearRecent={() => setRecentSearches([])}
             user={user}
             theme={theme}
             onToggleTheme={handleToggleTheme}
-            showSearchBar={currentTab !== 'home'}
+            showSearchBar={true}
             searchQuery={searchQuery}
             onSearchChange={(q) => handleUpdateTab(activeTabId, { query: q, searchQuery: q })}
             onExecuteSearch={(e) => executeSearch(searchQuery, currentTab, e)}
@@ -878,11 +977,11 @@ export default function App() {
             depth={answerDepth}
             onSetDepth={setAnswerDepth}
             currentLanguage={currentLanguage}
-            onSelectLanguage={setCurrentLanguage}
+            onSelectLanguage={handleLanguageChange}
           />
         )}
 
-        {(currentTab === 'all' || currentTab === 'websites' || currentTab === 'apps' || currentTab === 'github' || currentTab === 'ai') && (
+        {(currentTab === 'all' || currentTab === 'websites' || currentTab === 'apps' || currentTab === 'github' || currentTab === 'ai' || currentTab === 'articles' || currentTab === 'health-education' || currentTab === 'dating-relationships' || currentTab === 'social' || currentTab === 'people') && (
           <SearchResultsView
             query={activeQuery || "Quantum Computing"}
             results={webResults}
@@ -894,6 +993,7 @@ export default function App() {
             onSelectTab={(tab) => handleUpdateTab(activeTabId, { currentSubTab: tab, currentTab: tab })}
             onBackToHome={() => handleUpdateTab(activeTabId, { currentSubTab: 'home', currentTab: 'home' })}
             onNewSearch={() => handleUpdateTab(activeTabId, { query: '', searchQuery: '', currentSubTab: 'home', currentTab: 'home' })}
+            onExecuteSearch={(q) => executeSearch(q, currentTab)}
             onSavePage={(item) => {
               if (savedItems.some(s => s.id === item.id)) {
                 setSavedItems(savedItems.filter(s => s.id !== item.id));
@@ -914,8 +1014,25 @@ export default function App() {
             websitesResults={websitesResults}
             appsResults={appsResults}
             githubResults={githubResults}
+            safetyBlocked={safetyBlocked}
+            blockReason={blockReason}
+            helplines={helplines}
+            isAdultQuery={isAdultQuery}
+            isRomanticQuery={isRomanticQuery}
+            categoryCounts={categoryCounts}
+            safeSearchMode={safeSearchMode}
+            onSafeSearchToggle={(newMode) => {
+              setSafeSearchMode(newMode);
+              localStorage.setItem('antiqora_safesearch_mode', newMode);
+              settingsManager.updateSettings({ safeSearchMode: newMode });
+              if (activeQuery) {
+                executeSearch(activeQuery, currentTab, newMode);
+              }
+            }}
             onOpenRoadmap={() => setIsRoadmapOpen(true)}
             onOpenDocument={() => setIsDocOpen(true)}
+            currentLanguage={currentLanguage}
+            onSelectLanguage={handleLanguageChange}
           />
         )}
 
@@ -957,15 +1074,15 @@ export default function App() {
         )}
 
         {currentTab === 'images' && (
-          <ImagesView images={images} isLoading={isSearchLoading} />
+          <ImagesView initialQuery={activeQuery || searchQuery} images={images} isLoading={isSearchLoading} />
         )}
 
         {currentTab === 'news' && (
-          <NewsView news={news} isLoading={isSearchLoading} />
+          <NewsView news={news} isLoading={isSearchLoading} searchQuery={activeQuery || searchQuery} onSearch={(q) => executeSearch(q, 'news')} />
         )}
 
         {currentTab === 'videos' && (
-          <VideosView videos={videos} isLoading={isSearchLoading} />
+          <VideosView videos={videos} isLoading={isSearchLoading} searchQuery={activeQuery || searchQuery} onSearch={(q) => executeSearch(q, 'videos')} />
         )}
 
         {currentTab === 'places' && (

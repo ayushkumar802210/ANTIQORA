@@ -34,16 +34,39 @@ export interface SearchResultItem {
   verified?: boolean;
   isOfficial?: boolean;
   source?: string;
+  isAdult?: boolean;
+  rating?: string;
 }
 
 export interface ImageResultItem {
   id: string;
-  title: string;
+  type?: "image";
+  title?: string;
+  imageUrl?: string;
+  thumbnailUrl?: string;
+  sourceUrl?: string;
+  sourceName?: string;
+  width?: number;
+  height?: number;
+  publishedAt?: string;
+  isOfficial?: boolean;
+  metadata?: Record<string, unknown>;
+
+  // Legacy & UI compatibility fields
   url: string;
   domain: string;
-  dimensions: string;
+  dimensions?: string;
   caption?: string;
   attribution?: string;
+}
+
+export interface ImageSearchResponsePayload {
+  results: ImageResultItem[];
+  nextPageToken?: string;
+  hasMore: boolean;
+  totalEstimate?: number;
+  page: number;
+  query: string;
 }
 
 export interface NewsResultItem {
@@ -67,6 +90,19 @@ export interface VideoResultItem {
   description: string;
   url: string;
   channel?: string;
+  isEmbeddable?: boolean;
+  isValidated?: boolean;
+  isAdult?: boolean;
+  rating?: string;
+}
+
+export interface VideoSummaryResponse {
+  title?: string;
+  summary: string;
+  bullets: string[];
+  keyTopics?: string[];
+  timeSaved?: string;
+  isAiGenerated?: boolean;
 }
 
 export interface PlaceResultItem {
@@ -159,17 +195,50 @@ export async function get3DOverview(query: string, depth: AnswerDepth = 'standar
   return generateLocal3DOverview(query, depth, language);
 }
 
-export async function generateAIAnswer(query: string, sources?: any[]): Promise<{ answer: string; sources?: any[] }> {
+export interface BilingualAIAnswer {
+  answer: string;
+  detectedLanguage?: {
+    code: string;
+    name: string;
+    nativeName: string;
+    isEnglish: boolean;
+    isHinglish?: boolean;
+  };
+  queryLanguageExplanation?: string;
+  englishExplanation?: string;
+  keyPointsQueryLang?: string[];
+  keyPointsEnglish?: string[];
+  sources?: Array<{ title: string; domain?: string; url: string }>;
+  isRealAi?: boolean;
+}
+
+export async function generateAIAnswer(query: string, sources?: any[], preferredLanguage?: string): Promise<BilingualAIAnswer> {
   try {
-    const overview = await get3DOverview(query);
+    const res = await fetch('/api/ai-answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, sources, preferredLanguage })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+  } catch (e) {
+    console.warn("API ai-answer unreachable, falling back:", e);
+  }
+
+  try {
+    const overview = await get3DOverview(query, 'standard', preferredLanguage || 'en');
     const combined = `${overview.present.summary}\n\nKey Dimension Analysis:\n• Historical Context: ${overview.past.summary}\n• Future Outlook: ${overview.future.summary}`;
     return {
       answer: combined,
+      englishExplanation: combined,
       sources: overview.sources || sources || []
     };
   } catch (e) {
     return {
       answer: `ANTIQORA Knowledge Engine overview for "${query}": Key developments encompass historical milestones, active present-day initiatives, and probabilistic future horizons.`,
+      englishExplanation: `Key developments for "${query}" encompass historical milestones, active present-day initiatives, and verified global reference indices.`,
       sources: sources || []
     };
   }
@@ -191,11 +260,19 @@ export type SearchResponse = {
   isRealApi: boolean;
   status: "success" | "offline" | "error";
   message?: string;
+  isBlocked?: boolean;
+  blockReason?: string;
+  helplines?: Array<{ name: string; contact: string; url?: string }>;
+  isAdultQuery?: boolean;
+  isRomanticQuery?: boolean;
+  categoryCounts?: Record<string, number>;
+  activeRegion?: string;
 };
 
 export async function searchWeb(
   query: string,
-  filter: string = 'all'
+  filter: string = 'all',
+  safeSearchMode: string = 'strict'
 ): Promise<SearchResponse> {
   const cleanQuery = query.trim();
 
@@ -210,7 +287,7 @@ export async function searchWeb(
 
   try {
     const response = await fetch(
-      `/api/search?q=${encodeURIComponent(cleanQuery)}&filter=${encodeURIComponent(filter)}`,
+      `/api/search?q=${encodeURIComponent(cleanQuery)}&filter=${encodeURIComponent(filter)}&safeSearch=${encodeURIComponent(safeSearchMode)}`,
       {
         headers: {
           Accept: "application/json",
@@ -224,6 +301,19 @@ export async function searchWeb(
 
     const data = await response.json();
 
+    if (data.isBlocked) {
+      return {
+        results: [],
+        totalResults: 0,
+        isRealApi: true,
+        status: "success",
+        isBlocked: true,
+        blockReason: data.blockReason,
+        helplines: data.helplines,
+        isAdultQuery: data.isAdultQuery,
+      };
+    }
+
     if (!Array.isArray(data.results)) {
       throw new Error("Invalid search response");
     }
@@ -231,6 +321,8 @@ export async function searchWeb(
     const mappedResults: SearchResultItem[] = data.results.map((item: any, idx: number) => {
       const normalized = normalizeSearchResult(item);
       if (item.id) normalized.id = String(item.id);
+      if (item.isAdult !== undefined) normalized.isAdult = item.isAdult;
+      if (item.rating) normalized.rating = item.rating;
       return normalized;
     });
 
@@ -240,6 +332,10 @@ export async function searchWeb(
       personEntity: data.personEntity || null,
       isRealApi: true,
       status: "success",
+      isAdultQuery: data.isAdultQuery,
+      isRomanticQuery: data.isRomanticQuery,
+      categoryCounts: data.categoryCounts,
+      activeRegion: data.activeRegion
     };
   } catch (error) {
     console.error("Search failed:", error);
@@ -257,11 +353,37 @@ export async function searchWeb(
   }
 }
 
-export async function searchImages(query: string = ''): Promise<ImageResultItem[]> {
+export async function fetchPaginatedImages(query: string = '', page: number = 1, pageToken?: string): Promise<ImageSearchResponsePayload> {
   try {
-    const res = await fetch(`/api/images?q=${encodeURIComponent(query)}`);
+    const url = `/api/images?q=${encodeURIComponent(query)}&page=${page}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+    const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
+      return {
+        results: data.results || [],
+        nextPageToken: data.nextPageToken,
+        hasMore: !!data.hasMore,
+        totalEstimate: data.totalEstimate,
+        page: data.page || page,
+        query
+      };
+    }
+  } catch (error) {
+    console.error("Paginated image search error:", error);
+  }
+
+  return {
+    results: [],
+    hasMore: false,
+    page,
+    query
+  };
+}
+
+export async function searchImages(query: string = ''): Promise<ImageResultItem[]> {
+  try {
+    const data = await fetchPaginatedImages(query, 1);
+    if (data.results && data.results.length > 0) {
       return data.results;
     }
   } catch {}
@@ -269,10 +391,7 @@ export async function searchImages(query: string = ''): Promise<ImageResultItem[
   return [
     { id: "img-1", title: `${query} - Cybernetic Architecture`, url: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=800&q=80", domain: "unsplash.com", dimensions: "3840 x 2160", caption: "High resolution system conceptual visualization." },
     { id: "img-2", title: `${query} - Quantum & Neural Processor Core`, url: "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=800&q=80", domain: "unsplash.com", dimensions: "2560 x 1440", caption: "Cryogenic computing array structure." },
-    { id: "img-3", title: `${query} - Global Data Mesh Visualization`, url: "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=800&q=80", domain: "unsplash.com", dimensions: "1920 x 1080", caption: "Decentralized knowledge nodes connected in real-time." },
-    { id: "img-4", title: `${query} - Autonomous Orbital Grid`, url: "https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?auto=format&fit=crop&w=800&q=80", domain: "unsplash.com", dimensions: "4096 x 2160", caption: "Satellite constellation relaying telemetric datasets." },
-    { id: "img-5", title: `${query} - Clean Energy Microgrid`, url: "https://images.unsplash.com/photo-1509391365360-2e959784a276?auto=format&fit=crop&w=800&q=80", domain: "unsplash.com", dimensions: "3000 x 2000", caption: "Photovoltaic storage balancing grid fluctuations." },
-    { id: "img-6", title: `${query} - Deep Biological Synthesis`, url: "https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80", domain: "unsplash.com", dimensions: "2400 x 1600", caption: "Microscopic molecular imaging analysis." }
+    { id: "img-3", title: `${query} - Global Data Mesh Visualization`, url: "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=800&q=80", domain: "unsplash.com", dimensions: "1920 x 1080", caption: "Decentralized knowledge nodes connected in real-time." }
   ];
 }
 
@@ -294,9 +413,9 @@ export async function searchNews(category: string = 'all', query: string = ''): 
   ];
 }
 
-export async function searchVideos(query: string = ''): Promise<VideoResultItem[]> {
+export async function searchVideos(query: string = '', safeSearchMode: string = 'strict'): Promise<VideoResultItem[]> {
   try {
-    const res = await fetch(`/api/videos?q=${encodeURIComponent(query)}`);
+    const res = await fetch(`/api/videos?q=${encodeURIComponent(query)}&safeSearch=${encodeURIComponent(safeSearchMode)}`);
     if (res.ok) {
       const data = await res.json();
       return data.results;
@@ -308,6 +427,45 @@ export async function searchVideos(query: string = ''): Promise<VideoResultItem[
     { id: "v-2", title: `Engineering Masterclass: The Core Principles of ${query}`, platform: "TechNexus", duration: "16:15", thumbnail: "https://images.unsplash.com/photo-1635070041078-e363dbe005cb?auto=format&fit=crop&w=600&q=80", description: "Deep technical dive with schematic breakdowns, performance metrics, and production case studies.", url: "#", channel: "Advanced Systems Institute" },
     { id: "v-3", title: `Future Scenarios: What Changes in the Next Decade?`, platform: "Foresight Channel", duration: "14:50", thumbnail: "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?auto=format&fit=crop&w=600&q=80", description: "Expert panel analyzing emerging trends, risk factors, and high-probability technology trajectories.", url: "#", channel: "Future Intelligence Lab" }
   ];
+}
+
+export async function summarizeVideo(video: {
+  title: string;
+  description?: string;
+  duration?: string;
+  platform?: string;
+  channel?: string;
+  url?: string;
+}): Promise<VideoSummaryResponse> {
+  try {
+    const res = await fetch('/api/video/summarize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(video)
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+  } catch (err) {
+    console.warn("summarizeVideo API fetch error:", err);
+  }
+
+  // Resilient client fallback
+  const cleanDesc = (video.description || '').replace(/https?:\/\/\S+/g, '').trim();
+  return {
+    title: video.title,
+    summary: cleanDesc ? (cleanDesc.length > 180 ? cleanDesc.slice(0, 180) + '...' : cleanDesc) : `Detailed video overview for "${video.title}".`,
+    bullets: [
+      `Core Subject: In-depth exploration of "${video.title}" hosted by ${video.channel || video.platform || 'the creators'}.`,
+      `Context & Background: ${cleanDesc || 'Comprehensive discussion highlighting foundational principles and real-world considerations.'}`,
+      `Technical & Strategic Takeaway: Detailed comparative analysis and actionable findings.`,
+      `Audience Value: Key takeaways distilled to understand the substance without watching the entire ${video.duration || 'long-form'} video.`
+    ],
+    keyTopics: [video.channel || "Deep Dive", "Analysis", "Video Intelligence"].filter(Boolean),
+    timeSaved: video.duration ? `~${video.duration} watch time saved` : "~12 min saved",
+    isAiGenerated: false
+  };
 }
 
 export async function searchPlaces(query: string = ''): Promise<PlaceResultItem[]> {
@@ -409,20 +567,38 @@ export async function compareEntities(itemA: string, itemB: string): Promise<Com
   };
 }
 
-export async function translateText(text: string, targetLang: string, sourceLang: string = 'auto'): Promise<{ translatedText: string; detectedLanguage: string }> {
+export interface TranslationResult {
+  translatedText: string;
+  detectedLanguage: string;
+  detectedLangCode?: string;
+  targetLanguage?: string;
+  pronunciation?: string;
+  isRealAi?: boolean;
+}
+
+export async function translateText(text: string, targetLang: string, sourceLang: string = 'auto'): Promise<TranslationResult> {
   try {
     const res = await fetch('/api/translate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, targetLang, sourceLang })
     });
-    if (res.ok) return await res.json();
-  } catch {}
+    if (res.ok) {
+      const data = await res.json();
+      return data;
+    }
+  } catch (err) {
+    console.warn("Translation API request error:", err);
+  }
 
   // Fallback demo translation
   return {
     translatedText: `[Translated to ${targetLang}]: ${text}`,
-    detectedLanguage: sourceLang === 'auto' ? 'English' : sourceLang
+    detectedLanguage: sourceLang === 'auto' ? 'Auto-Detected' : sourceLang,
+    detectedLangCode: sourceLang === 'auto' ? 'auto' : sourceLang,
+    targetLanguage: targetLang,
+    pronunciation: '',
+    isRealAi: false
   };
 }
 
@@ -705,6 +881,41 @@ export async function summarizeSearchResult(item: {
       `Verified Source: Indexed from ${item.domain || 'trusted domain'}.`,
       `Key Takeaway: Provides actionable reference specifications and structured insights.`
     ]
+  };
+}
+
+// ----------------------------------------------------
+// Universal Search API with Pagination & Multi-Source Support
+// ----------------------------------------------------
+export interface UniversalSearchResponse {
+  query: string;
+  type: string;
+  results: any[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  nextPage?: number;
+  total?: number;
+  error?: string;
+}
+
+export async function searchUniversal(query: string, type: string = 'all', page: number = 1, pageSize: number = 24): Promise<UniversalSearchResponse> {
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=${encodeURIComponent(type)}&page=${page}&pageSize=${pageSize}`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.warn("Universal search API error:", err);
+  }
+  return {
+    query,
+    type,
+    results: [],
+    page,
+    pageSize,
+    hasMore: false,
+    error: "Some results are temporarily unavailable."
   };
 }
 

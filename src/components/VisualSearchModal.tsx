@@ -14,10 +14,11 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
   onSearchWithVisual
 }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [lensMode, setLensMode] = useState<'search' | 'text' | 'translate' | 'homework'>('search');
   const [prompt, setPrompt] = useState('Explain this image, identify key objects, and extract any visible text.');
   const [loading, setLoading] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<{
     description: string;
@@ -42,7 +43,9 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
   };
 
   useEffect(() => {
-    if (!isOpen) {
+    if (isOpen) {
+      startCamera('environment');
+    } else {
       stopCameraStream();
       setSelectedImage(null);
       setAnalysisResult(null);
@@ -74,7 +77,7 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
       }
       setIsCameraActive(true);
     } catch (err: any) {
-      console.info("Camera access optional or not allowed in this sandbox environment. Using Lens simulated visual scanner mode.");
+      console.info("Camera access optional or not allowed in sandbox. Using simulation mode.");
       setCameraError(null);
       setIsCameraActive(false);
     }
@@ -88,6 +91,28 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
     }
   };
 
+  const executeAnalysisWithImage = async (dataUrl: string, mode: string) => {
+    setSelectedImage(dataUrl);
+    stopCameraStream();
+    setLoading(true);
+
+    let modePrompt = "Identify objects, landmarks, or items in this image and provide comprehensive search insights.";
+    if (mode === 'text') modePrompt = "Extract and transcribe all visible text in this image accurately (OCR).";
+    else if (mode === 'translate') modePrompt = "Detect all text in this image, translate foreign languages to English, and explain.";
+    else if (mode === 'homework') modePrompt = "Solve any math, science, or academic problem visible in this image step-by-step.";
+
+    setPrompt(modePrompt);
+
+    try {
+      const result = await analyzeImage(dataUrl, modePrompt);
+      setAnalysisResult(result);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const capturePhoto = () => {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
@@ -96,12 +121,9 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
       canvas.height = video.videoHeight || 480;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-        // If front camera, flip horizontally for mirror effect if needed or draw as is
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-        setSelectedImage(dataUrl);
-        setAnalysisResult(null);
-        stopCameraStream();
+        executeAnalysisWithImage(dataUrl, lensMode);
       }
     }
   };
@@ -111,9 +133,7 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
     if (file) {
       const reader = new FileReader();
       reader.onload = () => {
-        setSelectedImage(reader.result as string);
-        setAnalysisResult(null);
-        stopCameraStream();
+        executeAnalysisWithImage(reader.result as string, lensMode);
       };
       reader.readAsDataURL(file);
     }
@@ -125,9 +145,7 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
     if (file && file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = () => {
-        setSelectedImage(reader.result as string);
-        setAnalysisResult(null);
-        stopCameraStream();
+        executeAnalysisWithImage(reader.result as string, lensMode);
       };
       reader.readAsDataURL(file);
     }
@@ -147,9 +165,7 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
   };
 
   const handleSelectSample = (sampleUrl: string) => {
-    stopCameraStream();
-    setSelectedImage(sampleUrl);
-    setAnalysisResult(null);
+    executeAnalysisWithImage(sampleUrl, lensMode);
   };
 
   const handleCloseModal = () => {
@@ -167,8 +183,8 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
           <div className="flex items-center gap-2">
-            <Camera className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
-            <h3 className="text-base font-bold text-slate-900 dark:text-white">ANTIQORA Camera & Vision Search</h3>
+            <Sparkles className="w-5 h-5 text-cyan-600 dark:text-cyan-400" />
+            <h3 className="text-base font-bold text-slate-900 dark:text-white">Google Lens & Vision Search</h3>
           </div>
           <button 
             onClick={handleCloseModal} 
@@ -179,9 +195,33 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
           </button>
         </div>
 
+        {/* Google Lens Mode Selector Tabs */}
+        <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/80 p-1.5 rounded-2xl">
+          {[
+            { id: 'search', label: '🔍 Search', desc: 'Visual Match' },
+            { id: 'text', label: '📄 Text / OCR', desc: 'Extract Text' },
+            { id: 'translate', label: '🌐 Translate', desc: 'Multi-lingual' },
+            { id: 'homework', label: '📐 Homework', desc: 'Step-by-Step' },
+          ].map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => setLensMode(m.id as any)}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition flex flex-col items-center gap-0.5 ${
+                lensMode === m.id
+                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-slate-950 shadow-md'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <span>{m.label}</span>
+              <span className="text-[9px] opacity-80 font-normal">{m.desc}</span>
+            </button>
+          ))}
+        </div>
+
         {/* Live Camera Viewfinder or Upload/Preview Area */}
         {isCameraActive ? (
-          <div className="relative rounded-2xl overflow-hidden bg-slate-950 border-2 border-cyan-500/50 shadow-lg">
+          <div className="relative rounded-2xl overflow-hidden bg-slate-950 border-2 border-cyan-500/60 shadow-2xl">
             <video
               ref={videoRef}
               playsInline
@@ -190,8 +230,28 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
               className={`w-full max-h-80 object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`}
             />
 
+            {/* Google Lens Style Scanner Frame & Animation Overlay */}
+            <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
+              {/* Top Instruction Badge */}
+              <div className="absolute top-4 px-3.5 py-1.5 rounded-full bg-slate-950/80 border border-cyan-500/40 text-cyan-300 text-[11px] font-semibold tracking-wide backdrop-blur-md shadow-lg animate-pulse">
+                🔍 Point camera at any object, text or barcode to scan
+              </div>
+
+              {/* Center Target Scanning Box */}
+              <div className="w-48 h-48 sm:w-60 sm:h-60 border-2 border-cyan-400/80 rounded-3xl relative overflow-hidden shadow-[0_0_30px_rgba(34,211,238,0.3)]">
+                {/* Laser Scanning Line Animation */}
+                <div className="absolute inset-x-0 h-1 bg-cyan-400 shadow-[0_0_15px_#22d3ee] animate-bounce" />
+                
+                {/* Corner Markers */}
+                <div className="absolute top-2 left-2 w-4 h-4 border-t-2 border-l-2 border-cyan-300"></div>
+                <div className="absolute top-2 right-2 w-4 h-4 border-t-2 border-r-2 border-cyan-300"></div>
+                <div className="absolute bottom-2 left-2 w-4 h-4 border-b-2 border-l-2 border-cyan-300"></div>
+                <div className="absolute bottom-2 right-2 w-4 h-4 border-b-2 border-r-2 border-cyan-300"></div>
+              </div>
+            </div>
+
             {/* Camera Overlay Controls */}
-            <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-slate-950/90 via-slate-950/50 to-transparent flex items-center justify-between">
+            <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-slate-950/95 via-slate-950/60 to-transparent flex items-center justify-between">
               <button
                 type="button"
                 onClick={toggleCameraFacing}
@@ -207,14 +267,14 @@ export const VisualSearchModal: React.FC<VisualSearchModalProps> = ({
                 className="px-6 py-2.5 rounded-full bg-gradient-to-r from-cyan-400 to-indigo-500 text-slate-950 font-bold text-sm shadow-lg hover:brightness-110 active:scale-95 transition flex items-center gap-2"
               >
                 <Camera className="w-5 h-5" />
-                <span>Capture Photo</span>
+                <span>Scan & Search</span>
               </button>
 
               <button
                 type="button"
                 onClick={stopCameraStream}
                 className="p-2.5 rounded-full bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 transition"
-                title="Stop Camera"
+                title="Close Scanner"
               >
                 <VideoOff className="w-5 h-5" />
               </button>
